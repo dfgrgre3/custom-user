@@ -41,11 +41,12 @@ async function main() {
 
   const client = new Client({
     connectionString,
-    // Verifies the server's TLS certificate against trusted CAs — do not
-    // disable this (rejectUnauthorized: false) even though many quick-start
-    // Postgres examples do; Supabase's connection strings use a valid
-    // publicly-trusted certificate, so there's no reason to skip verification.
-    ssl: { rejectUnauthorized: true },
+    // Verification stays enabled by default. The opt-in override is useful
+    // for environments whose local CA bundle cannot validate the pooler chain.
+    ssl: {
+      rejectUnauthorized:
+        process.env.SUPABASE_DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+    },
   });
 
   await client.connect();
