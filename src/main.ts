@@ -12,11 +12,11 @@ async function bootstrap(): Promise<void> {
 
   const configService = app.get(ConfigService);
 
-  // Keep browser access limited to the configured assessment UI origin.
-  // Non-browser clients are unaffected because CORS is browser-only.
-  const frontendOrigin = configService.get<string>('app.frontendOrigin');
+  // The frontend may be served from localhost, a Dev Tunnel, or another
+  // deployment URL, so reflect the requesting origin for browser access.
+  // Credentials are not enabled, so this does not expose cookie-based auth.
   app.enableCors({
-    origin: frontendOrigin ?? false,
+    origin: true,
     methods: ['GET', 'POST'],
   });
 
