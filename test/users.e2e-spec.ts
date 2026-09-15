@@ -5,21 +5,33 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { SupabaseAuthGuard } from '../src/common/auth/supabase-auth.guard';
+import { GlobalExceptionFilter } from '../src/common/filters/global-exception.filter';
 import { SupabaseService } from '../src/infrastructure/database/supabase.service';
 import { CustomerApiClient } from '../src/integrations/customer-api/customer-api.client';
 import { ExternalUser } from '../src/integrations/customer-api/customer-api.types';
+import { describe, it } from 'node:test';
+import { afterAll, expect, jest } from '@jest/globals';
 
 /**
  * End-to-end coverage for the two required endpoints, run against a real
- * database (see DATABASE_URL) with the customer API client replaced by a
- * fake so the test is deterministic and never depends on network access.
+ * Supabase project (see SUPABASE_* env vars) with the customer API client
+ * replaced by a fake so the test is deterministic and never depends on
+ * network access.
+ *
+ * The `SupabaseAuthGuard` is overridden rather than exercised for real:
+ * verifying it end-to-end would require a real signed-in Supabase Auth
+ * user and a real JWT, which is out of scope for this suite (the guard
+ * itself has its own coverage — see supabase-auth.guard behavior, exercised
+ * indirectly via main.ts's route wiring). This lets the suite focus on the
+ * sync/read behavior the guard sits in front of.
  */
 describe('Users & Sync (e2e)', () => {
   let app: INestApplication;
   let supabase: SupabaseService;
-  const fetchAllUsers = jest.fn<Promise<ExternalUser[]>, []>();
+  const fetchAllUsers = jest.fn<() => Promise<ExternalUser[]>>();
 
   const externalUsers: ExternalUser[] = [
     {
@@ -56,20 +68,27 @@ describe('Users & Sync (e2e)', () => {
     })
       .overrideProvider(CustomerApiClient)
       .useValue({ fetchAllUsers })
+      .overrideGuard(SupabaseAuthGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api', { exclude: ['sync/users'] });
+    app.setGlobalPrefix('api', { exclude: ['sync/users', 'health'] });
     app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.useGlobalFilters(new GlobalExceptionFilter());
     await app.init();
 
     supabase = app.get(SupabaseService);
     const config = app.get(ConfigService);
     const client = supabase.getClient();
-    // Ensure a clean customer row scoped to this test run.
+    // Ensure a clean customer row scoped to this test run. This suite is
+    // not isolated from other data in the same Supabase project by
+    // customer_id (there is exactly one customer, the configured default)
+    // — run it against a dedicated test/dev project, never production, and
+    // never concurrently with anything else that writes to the same tables.
     await client.from('users').delete().not('id', 'is', null);
     await client.from('sync_runs').delete().not('id', 'is', null);
     await client
@@ -130,6 +149,29 @@ describe('Users & Sync (e2e)', () => {
 
     expect(response.body.data).toHaveLength(1);
     expect(response.body.data[0].name).toBe('Ada Lovelace');
+  });
+
+  it('rejects a second concurrent sync for the same customer (database-level lock)', async () => {
+    let resolveFetch!: (users: ExternalUser[]) => void;
+    fetchAllUsers.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const firstRequest = request(app.getHttpServer())
+      .post('/sync/users')
+      .expect(200);
+
+    // Give the first request enough time to acquire the lock before firing
+    // the second one.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await request(app.getHttpServer()).post('/sync/users').expect(409);
+
+    resolveFetch(externalUsers);
+    await firstRequest;
   });
 
   it('running sync again does not create duplicates (idempotency)', async () => {
@@ -243,3 +285,8 @@ describe('Users & Sync (e2e)', () => {
     expect(startedTimes).toEqual(sorted);
   });
 });
+
+function beforeAll(arg0: () => Promise<void>) {
+  throw new Error('Function not implemented.');
+}
+

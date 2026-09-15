@@ -8,20 +8,30 @@ import { mapExternalUserToSyncedUserData } from '../../integrations/customer-api
 import { CustomersService } from '../customers/customers.service';
 import { SyncRun, SyncRunRow, mapSyncRunRow } from '../../domain/types';
 
+/** Postgres error code raised by `start_sync_run()` when a lock is already held (see migration 002). */
+const SYNC_ALREADY_RUNNING_CODE = 'P0001';
+
 /**
  * Orchestrates one synchronization run for one customer:
  *
- *   1. Fetch the *complete* external dataset (all pages) before touching
- *      the database — a failure here leaves previously synced data intact.
- *   2. Map every external user into our internal representation.
- *   3. Atomically (via the `sync_users` Postgres function): upsert every
- *      fetched user (by (customerId, externalUserId)), then soft-delete
- *      any previously synced, still-active user that was NOT in this
- *      fetch. This used to be a Prisma `$transaction`; the Supabase JS
- *      client has no client-side multi-statement transaction API, so the
- *      atomic step now lives in a database function (see
- *      supabase/schema.sql) invoked with a single `.rpc()` call.
- *   4. Record the SyncRun outcome.
+ *   1. Start the run via the `start_sync_run` Postgres function, which
+ *      atomically enforces "at most one RUNNING sync per customer" through
+ *      a partial unique index (see supabase/migrations/002) — a
+ *      database-level lock, not an in-process one, so it holds even across
+ *      multiple backend instances. A leased expiry means a crashed
+ *      process's stuck RUNNING row doesn't lock the customer out forever.
+ *   2. Fetch the *complete* external dataset (all pages) before touching
+ *      user data — a failure here leaves previously synced data intact.
+ *   3. Map every external user into our internal representation.
+ *   4. Complete the run via `complete_sync_run`, which performs the
+ *      upsert + soft-delete pass AND marks the sync_run SUCCESS in one
+ *      Postgres transaction (see supabase/migrations/003). Folding both
+ *      into one function closes a real consistency gap: previously, the
+ *      user upsert and the "mark SUCCESS" write were two separate
+ *      round-trips, so a failure on the second one recorded a SyncRun as
+ *      FAILED even though the user data had already been committed —
+ *      users would be correctly synchronized while their own operational
+ *      record said otherwise. Now both succeed or both roll back together.
  *
  * Running the same fetch twice is a no-op: unchanged users are simply
  * re-written with the same values, and already-deleted users stay deleted.
@@ -29,9 +39,6 @@ import { SyncRun, SyncRunRow, mapSyncRunRow } from '../../domain/types';
 @Injectable()
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
-
-  /** Process-local guard against overlapping runs for the same customer. */
-  private readonly runningCustomers = new Set<string>();
 
   constructor(
     private readonly supabase: SupabaseService,
@@ -49,21 +56,19 @@ export class SyncService {
       throw new Error(`Unknown customer: ${customerId}`);
     }
 
-    if (this.runningCustomers.has(customer.id)) {
-      throw new SyncInProgressError(customer.id);
-    }
-    this.runningCustomers.add(customer.id);
-
     const client = this.supabase.getClient();
 
     const { data: createdRun, error: createRunError } = await client
-      .from('sync_runs')
-      .insert({ customer_id: customer.id, status: 'RUNNING' })
-      .select('*')
+      .rpc('start_sync_run', { p_customer_id: customer.id })
       .single<SyncRunRow>();
-    if (createRunError || !createdRun) {
-      this.runningCustomers.delete(customer.id);
-      throw new Error(`Failed to create sync run: ${createRunError?.message}`);
+    if (createRunError) {
+      if (createRunError.code === SYNC_ALREADY_RUNNING_CODE) {
+        throw new SyncInProgressError(customer.id);
+      }
+      throw new Error(`Failed to create sync run: ${createRunError.message}`);
+    }
+    if (!createdRun) {
+      throw new Error('Failed to create sync run: no row returned.');
     }
     const syncRunId = createdRun.id;
 
@@ -95,45 +100,21 @@ export class SyncService {
         };
       });
 
-      const { data: rpcResult, error: rpcError } = await client
-        .rpc('sync_users', {
+      const { data: completedRow, error: completeError } = await client
+        .rpc('complete_sync_run', {
+          p_sync_run_id: syncRunId,
           p_customer_id: customer.id,
           p_users: payload,
         })
-        .single<{ created: number; updated: number; deleted: number }>();
-
-      if (rpcError || !rpcResult) {
-        throw new Error(`sync_users failed: ${rpcError?.message}`);
-      }
-
-      const result = {
-        fetched: externalUsers.length,
-        created: rpcResult.created,
-        updated: rpcResult.updated,
-        deleted: rpcResult.deleted,
-      };
-
-      const { data: completedRow, error: completeError } = await client
-        .from('sync_runs')
-        .update({
-          status: 'SUCCESS',
-          completed_at: new Date().toISOString(),
-          records_fetched: result.fetched,
-          records_created: result.created,
-          records_updated: result.updated,
-          records_deleted: result.deleted,
-        })
-        .eq('id', syncRunId)
-        .select('*')
         .single<SyncRunRow>();
       if (completeError || !completedRow) {
         throw new Error(
-          `Failed to record sync run completion: ${completeError?.message}`,
+          `Failed to complete sync run: ${completeError?.message}`,
         );
       }
 
       this.logger.log(
-        `sync.completed customerId=${customer.id} fetched=${result.fetched} created=${result.created} updated=${result.updated} deleted=${result.deleted}`,
+        `sync.completed customerId=${customer.id} fetched=${completedRow.records_fetched} created=${completedRow.records_created} updated=${completedRow.records_updated} deleted=${completedRow.records_deleted}`,
       );
       return mapSyncRunRow(completedRow);
     } catch (error) {
@@ -143,15 +124,11 @@ export class SyncService {
       );
 
       const { data: failedRow, error: failError } = await client
-        .from('sync_runs')
-        .update({
-          status: 'FAILED',
-          completed_at: new Date().toISOString(),
-          error_code: code,
-          error_message: message,
+        .rpc('fail_sync_run', {
+          p_sync_run_id: syncRunId,
+          p_error_code: code,
+          p_error_message: message,
         })
-        .eq('id', syncRunId)
-        .select('*')
         .single<SyncRunRow>();
       if (failError || !failedRow) {
         throw new Error(
@@ -159,12 +136,16 @@ export class SyncService {
         );
       }
       return mapSyncRunRow(failedRow);
-    } finally {
-      this.runningCustomers.delete(customer.id);
     }
   }
 
+  /**
+   * `customerId` is required, same reasoning as UsersRepository.findMany:
+   * without it, a deployment with more than one `Customer` row would leak
+   * every customer's sync history into one response.
+   */
   async listRuns(
+    customerId: string,
     page: number,
     limit: number,
   ): Promise<{ data: SyncRun[]; total: number }> {
@@ -175,6 +156,7 @@ export class SyncService {
       .getClient()
       .from('sync_runs')
       .select('*', { count: 'exact' })
+      .eq('customer_id', customerId)
       .order('started_at', { ascending: false })
       .range(from, to);
 
@@ -186,6 +168,13 @@ export class SyncService {
       data: ((data ?? []) as SyncRunRow[]).map(mapSyncRunRow),
       total: count ?? 0,
     };
+  }
+
+  /** Resolves an explicit customerId, or the configured default customer. */
+  async resolveCustomerId(customerId?: string): Promise<string> {
+    if (customerId) return customerId;
+    const customer = await this.customersService.getOrCreateDefaultCustomer();
+    return customer.id;
   }
 
   private classifyError(error: unknown): { code: string; message: string } {

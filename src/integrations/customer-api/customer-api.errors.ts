@@ -4,6 +4,14 @@ export class CustomerApiError extends Error {
     message: string,
     readonly statusCode?: number,
     readonly cause?: unknown,
+    /**
+     * Seconds to wait before retrying, parsed from the response's
+     * `Retry-After` header when present (common on 429/503 responses).
+     * When set, the retry backoff honors this instead of computing its own
+     * exponential delay — the server is telling us exactly how long to
+     * wait, which is more accurate than guessing.
+     */
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'CustomerApiError';
@@ -18,11 +26,16 @@ export class CustomerApiUnauthorizedError extends CustomerApiError {
 }
 
 export class CustomerApiUnavailableError extends CustomerApiError {
-  constructor(cause?: unknown) {
+  constructor(
+    cause?: unknown,
+    statusCode?: number,
+    retryAfterSeconds?: number,
+  ) {
     super(
       'Customer API is unreachable or returned a server error.',
-      undefined,
+      statusCode,
       cause,
+      retryAfterSeconds,
     );
     this.name = 'CustomerApiUnavailableError';
   }

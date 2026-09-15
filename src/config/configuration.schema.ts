@@ -1,3 +1,4 @@
+import { validateCronExpression } from 'cron';
 import { z } from 'zod';
 
 /**
@@ -18,6 +19,10 @@ export const environmentSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z
     .string()
     .min(1, 'SUPABASE_SERVICE_ROLE_KEY is required.'),
+  SUPABASE_JWKS_URL: z.string().url({
+    message:
+      'SUPABASE_JWKS_URL must be a valid URL (https://<ref>.supabase.co/auth/v1/.well-known/jwks.json).',
+  }),
 
   CUSTOMER_API_BASE_URL: z.string().url({
     message: 'CUSTOMER_API_BASE_URL must be a valid URL.',
@@ -29,7 +34,16 @@ export const environmentSchema = z.object({
   CUSTOMER_API_MAX_RETRIES: z.coerce.number().int().min(0).default(3),
   CUSTOMER_API_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(100),
 
-  SYNC_CRON: z.string().optional().default(''),
+  SYNC_CRON: z
+    .string()
+    .optional()
+    .default('')
+    .refine(
+      (value) => value === '' || validateCronExpression(value).valid,
+      'SYNC_CRON must be a valid cron expression (or empty to disable scheduled sync).',
+    ),
+
+  FRONTEND_ORIGIN: z.string().url().optional(),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

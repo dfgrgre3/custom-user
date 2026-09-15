@@ -38,11 +38,28 @@ export class SyncScheduler implements OnModuleInit {
 
     const job = new CronJob(cronExpression, () => {
       this.logger.log('Running scheduled synchronization.');
-      this.syncService.syncCustomer().catch((error) => {
-        this.logger.error(
-          `Scheduled synchronization failed: ${(error as Error).message}`,
-        );
-      });
+      this.syncService
+        .syncCustomer()
+        .then((result) => {
+          // syncCustomer() resolves (doesn't throw) even when the sync
+          // itself failed — a customer API outage is recorded as a FAILED
+          // SyncRun, not a rejected promise (see SyncService.syncCustomer).
+          // `.catch()` alone would never fire for that case, so scheduled
+          // failures would go completely unlogged; this checks the result's
+          // own status instead.
+          if (result.status === 'FAILED') {
+            this.logger.error(
+              `Scheduled synchronization failed: ${result.errorCode} ${result.errorMessage}`,
+            );
+          }
+        })
+        .catch((error) => {
+          // Only reachable for errors syncCustomer() itself doesn't catch,
+          // e.g. an unknown customerId or a lock-acquisition failure.
+          this.logger.error(
+            `Scheduled synchronization failed: ${(error as Error).message}`,
+          );
+        });
     });
 
     this.schedulerRegistry.addCronJob(

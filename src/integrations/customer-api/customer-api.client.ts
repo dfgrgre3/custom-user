@@ -37,11 +37,29 @@ export class CustomerApiClient {
     options: CustomerApiClientOptions,
   ): Promise<ExternalUser[]> {
     const users: ExternalUser[] = [];
+    const seenIds = new Set<string>();
     let page = 1;
     let totalPages = 1;
 
     do {
       const response = await this.fetchPage(options, page);
+      // The schema already rejects duplicate ids *within* one page (see
+      // customer-api.schema.ts); this additionally catches the same id
+      // appearing across different pages — e.g. if the underlying dataset
+      // shifts between page fetches (a user inserted mid-pagination shifts
+      // every subsequent page's offset by one, re-serving a user we've
+      // already seen). Either way, a duplicate here means the fetched
+      // dataset can't be trusted, so the whole sync fails rather than
+      // silently double-counting or letting the RPC's own duplicate check
+      // fail confusingly deep in a much larger batch.
+      for (const user of response.data) {
+        if (seenIds.has(user.id)) {
+          throw new CustomerApiContractError(
+            `Duplicate external user id across pages: ${user.id}`,
+          );
+        }
+        seenIds.add(user.id);
+      }
       users.push(...response.data);
       totalPages = response.pagination.totalPages;
       page += 1;
@@ -82,6 +100,17 @@ export class CustomerApiClient {
     });
   }
 
+  /**
+   * Status codes worth retrying even though most 4xx codes are not:
+   *   - 408 Request Timeout, 425 Too Early — transient, request-level.
+   *   - 429 Too Many Requests — rate limiting; the *next* attempt has a
+   *     real chance of succeeding, unlike a malformed request or bad auth.
+   *   - 5xx — server-side failures, generally transient.
+   */
+  private static readonly RETRYABLE_STATUS_CODES = new Set([
+    408, 425, 429, 500, 502, 503, 504,
+  ]);
+
   private async withRetry<T>(
     maxRetries: number,
     run: () => Promise<T>,
@@ -95,15 +124,16 @@ export class CustomerApiClient {
       } catch (error) {
         lastError = error;
 
-        // Never retry auth failures, client (4xx) errors, or contract
-        // violations: none of these change on a retry — the token is
-        // still bad, the request is still malformed, or the API will
-        // still send back the same unexpected shape.
+        // Never retry auth failures or contract violations: neither
+        // changes on a retry — the token is still bad, or the API will
+        // still send back the same unexpected shape. Otherwise, only
+        // retry status codes known to be transient (see
+        // RETRYABLE_STATUS_CODES) rather than every non-2xx response.
         if (error instanceof CustomerApiUnauthorizedError) throw error;
         if (error instanceof CustomerApiContractError) throw error;
         if (
           error instanceof CustomerApiError &&
-          this.isNonRetryable(error.statusCode)
+          !this.isRetryable(error.statusCode)
         ) {
           throw error;
         }
@@ -111,7 +141,12 @@ export class CustomerApiClient {
         attempt += 1;
         if (attempt > maxRetries) break;
 
-        const backoffMs = 2 ** (attempt - 1) * 250;
+        const backoffMs = this.computeBackoffMs(
+          attempt,
+          error instanceof CustomerApiError
+            ? error.retryAfterSeconds
+            : undefined,
+        );
         this.logger.warn(
           `Customer API call failed (attempt ${attempt}/${maxRetries}); retrying in ${backoffMs}ms`,
         );
@@ -122,13 +157,53 @@ export class CustomerApiClient {
     throw lastError;
   }
 
-  private isNonRetryable(statusCode?: number): boolean {
-    return statusCode !== undefined && statusCode >= 400 && statusCode < 500;
+  private isRetryable(statusCode?: number): boolean {
+    // No status code at all means a network-level failure (timeout, DNS,
+    // connection reset) rather than an HTTP response — always worth retrying.
+    if (statusCode === undefined) return true;
+    return CustomerApiClient.RETRYABLE_STATUS_CODES.has(statusCode);
+  }
+
+  /**
+   * Honors the server's `Retry-After` header when given (exact, since the
+   * server knows its own rate-limit window better than we can guess).
+   * Otherwise falls back to exponential backoff with jitter: jitter avoids
+   * every concurrent caller retrying at exactly the same instant and
+   * re-creating the load spike that caused the failure (a "thundering herd").
+   */
+  private computeBackoffMs(
+    attempt: number,
+    retryAfterSeconds?: number,
+  ): number {
+    if (retryAfterSeconds !== undefined) {
+      return Math.round(retryAfterSeconds * 1000);
+    }
+    const base = 2 ** (attempt - 1) * 250;
+    const jitter = Math.random() * base * 0.25;
+    return Math.round(base + jitter);
+  }
+
+  private parseRetryAfterSeconds(error: unknown): number | undefined {
+    if (!isAxiosError(error)) return undefined;
+    const header = error.response?.headers?.['retry-after'];
+    if (!header) return undefined;
+
+    const asNumber = Number(header);
+    if (Number.isFinite(asNumber)) return asNumber;
+
+    // Retry-After may also be an HTTP-date rather than a delay in seconds.
+    const asDate = Date.parse(header);
+    if (!Number.isNaN(asDate)) {
+      return Math.max(0, (asDate - Date.now()) / 1000);
+    }
+    return undefined;
   }
 
   private toCustomerApiError(error: unknown): CustomerApiError {
     if (isAxiosError(error)) {
       const status = error.response?.status;
+      const retryAfterSeconds = this.parseRetryAfterSeconds(error);
+
       if (status === 401 || status === 403) {
         return new CustomerApiUnauthorizedError(error);
       }
@@ -138,9 +213,10 @@ export class CustomerApiClient {
           body?.error ?? `Customer API rejected the request (HTTP ${status}).`,
           status,
           error,
+          retryAfterSeconds,
         );
       }
-      return new CustomerApiUnavailableError(error);
+      return new CustomerApiUnavailableError(error, status, retryAfterSeconds);
     }
     return new CustomerApiUnavailableError(error);
   }

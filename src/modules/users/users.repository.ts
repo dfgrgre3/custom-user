@@ -28,14 +28,26 @@ function escapePostgrestFilterValue(value: string): string {
 export class UsersRepository {
   constructor(private readonly supabase: SupabaseService) {}
 
-  async findMany(query: ListUsersQueryDto): Promise<FindUsersResult> {
+  /**
+   * `customerId` is required — every query here is scoped to it, never a
+   * plain `select *` across all customers. Without this, a deployment with
+   * more than one `Customer` row would leak every customer's users into a
+   * single `GET /api/v1/users` response, and `findById` could return a
+   * user belonging to a different customer than the caller has access to
+   * as long as they knew (or guessed) its internal UUID.
+   */
+  async findMany(
+    customerId: string,
+    query: ListUsersQueryDto,
+  ): Promise<FindUsersResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
     let builder = this.supabase
       .getClient()
       .from('users')
-      .select('*', { count: 'exact' });
+      .select('*', { count: 'exact' })
+      .eq('customer_id', customerId);
 
     builder = query.includeDeleted ? builder : builder.is('deleted_at', null);
 
@@ -78,12 +90,13 @@ export class UsersRepository {
     };
   }
 
-  async findById(id: string): Promise<User | null> {
+  async findById(customerId: string, id: string): Promise<User | null> {
     const { data, error } = await this.supabase
       .getClient()
       .from('users')
       .select('*')
       .eq('id', id)
+      .eq('customer_id', customerId)
       .maybeSingle<UserRow>();
     if (error) {
       throw new Error(`Failed to look up user: ${error.message}`);

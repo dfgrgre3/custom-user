@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
 } from 'class-validator';
@@ -28,6 +29,15 @@ function toBoolean({ value }: { value: unknown }): unknown {
 }
 
 export class ListUsersQueryDto {
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Customer to scope this query to. Defaults to the configured default customer when omitted — never returns data across customers.',
+  })
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
   @ApiPropertyOptional({
     description: 'Case-insensitive filter on company name.',
   })

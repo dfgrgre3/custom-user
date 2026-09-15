@@ -7,16 +7,24 @@ import {
   HttpStatus,
   Post,
   Query,
+  UseGuards,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiPropertyOptional,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { IsOptional, IsUUID } from 'class-validator';
+import {
+  Roles,
+  SupabaseAuthGuard,
+} from '../../common/auth/supabase-auth.guard';
 import { SyncInProgressError } from '../../common/errors/errors';
 import { ListSyncRunsQueryDto } from './dto/list-sync-runs-query.dto';
 import { PaginatedSyncRunsResponseDto } from './dto/paginated-sync-runs-response.dto';
@@ -25,12 +33,27 @@ import { TriggerSyncResponseDto } from './dto/trigger-sync-response.dto';
 import { SyncService } from './sync.service';
 
 class TriggerSyncDto {
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Customer to sync. Defaults to the configured default customer when omitted.',
+  })
   @IsOptional()
   @IsUUID()
   customerId?: string;
 }
 
+/**
+ * Triggers writes against the customer dataset — restricted to the
+ * `admin` role rather than any authenticated user.
+ */
 @ApiTags('Sync')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({
+  description: 'Missing/invalid token, or not an admin.',
+})
+@UseGuards(SupabaseAuthGuard)
+@Roles('admin')
 @Controller({ path: 'sync', version: VERSION_NEUTRAL })
 export class SyncController {
   constructor(private readonly syncService: SyncService) {}
@@ -82,8 +105,17 @@ export class SyncController {
  * Separate controller (rather than a second method on SyncController) so
  * this endpoint can live under the normal `/api/v1` prefix and versioning,
  * while POST /sync/users keeps its own unversioned, unprefixed route.
+ *
+ * Operational history — restricted to admin/operations roles, same as the
+ * sync trigger itself, rather than any authenticated user.
  */
 @ApiTags('Sync')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({
+  description: 'Missing/invalid token, or not an admin.',
+})
+@UseGuards(SupabaseAuthGuard)
+@Roles('admin')
 @Controller({ path: 'sync', version: '1' })
 export class SyncRunsController {
   constructor(private readonly syncService: SyncService) {}
@@ -100,7 +132,14 @@ export class SyncRunsController {
   ): Promise<PaginatedSyncRunsResponseDto> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const { data, total } = await this.syncService.listRuns(page, limit);
+    const customerId = await this.syncService.resolveCustomerId(
+      query.customerId,
+    );
+    const { data, total } = await this.syncService.listRuns(
+      customerId,
+      page,
+      limit,
+    );
 
     return {
       data: data.map((run) => SyncRunResponseDto.fromEntity(run)),

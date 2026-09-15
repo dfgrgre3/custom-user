@@ -29,21 +29,94 @@ function externalUser(
   };
 }
 
-/** Minimal stand-in for the Supabase query builder chain used by SyncService. */
-function makeQueryBuilder(result: { data: unknown; error: unknown }) {
-  const builder: Record<string, jest.Mock> = {};
-  const chain = ['insert', 'update', 'select', 'eq', 'order', 'range'] as const;
-  for (const method of chain) {
-    builder[method] = jest.fn().mockReturnValue(builder);
+/**
+ * Everything the RPC-based SyncService touches now goes through
+ * `client.rpc(name, params)`. This stand-in tracks a single mutable
+ * sync_runs row (mirroring what start_sync_run/complete_sync_run/
+ * fail_sync_run would do server-side) and dispatches by RPC name.
+ */
+function makeSupabaseStub() {
+  let syncRunRow: Record<string, unknown> | null = null;
+  let running = false;
+
+  const rpc = jest.fn((name: string, params: Record<string, unknown>) => {
+    if (name === 'start_sync_run') {
+      if (running) {
+        return {
+          single: () =>
+            Promise.resolve({
+              data: null,
+              error: { code: 'P0001', message: 'sync_already_running' },
+            }),
+        };
+      }
+      running = true;
+      syncRunRow = {
+        id: 'run-1',
+        customer_id: params.p_customer_id,
+        status: 'RUNNING',
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: null,
+        records_fetched: null,
+        records_created: null,
+        records_updated: null,
+        records_deleted: null,
+        error_code: null,
+        error_message: null,
+      };
+      return {
+        single: () => Promise.resolve({ data: syncRunRow, error: null }),
+      };
+    }
+
+    if (name === 'complete_sync_run') {
+      return {
+        single: () =>
+          Promise.resolve(rpc.completeResult ?? { data: null, error: null }),
+      };
+    }
+
+    if (name === 'fail_sync_run') {
+      running = false;
+      Object.assign(syncRunRow!, {
+        status: 'FAILED',
+        completed_at: '2026-01-01T00:01:00.000Z',
+        error_code: params.p_error_code,
+        error_message: params.p_error_message,
+      });
+      return {
+        single: () => Promise.resolve({ data: syncRunRow, error: null }),
+      };
+    }
+
+    throw new Error(`Unexpected rpc: ${name}`);
+  }) as jest.Mock & { completeResult?: { data: unknown; error: unknown } };
+
+  function mockComplete(created: number, updated: number, deleted: number) {
+    rpc.completeResult = {
+      data: {
+        ...syncRunRow,
+        status: 'SUCCESS',
+        completed_at: '2026-01-01T00:01:00.000Z',
+        records_fetched: created + updated,
+        records_created: created,
+        records_updated: updated,
+        records_deleted: deleted,
+      },
+      error: null,
+    };
+    running = false;
   }
-  builder.single = jest.fn().mockResolvedValue(result);
-  return builder;
+
+  return {
+    supabase: { getClient: jest.fn().mockReturnValue({ rpc }) },
+    rpc,
+    mockComplete,
+  };
 }
 
 describe('SyncService', () => {
-  let fromMock: jest.Mock;
-  let rpcMock: jest.Mock;
-  let supabase: { getClient: jest.Mock };
+  let stub: ReturnType<typeof makeSupabaseStub>;
   let customerApiClient: { fetchAllUsers: jest.Mock };
   let customersService: {
     findById: jest.Mock;
@@ -52,54 +125,8 @@ describe('SyncService', () => {
   let config: { get: jest.Mock };
   let service: SyncService;
 
-  let syncRunRow: Record<string, unknown>;
-
   beforeEach(() => {
-    syncRunRow = {
-      id: 'run-1',
-      customer_id: CUSTOMER.id,
-      status: 'RUNNING',
-      started_at: '2026-01-01T00:00:00.000Z',
-      completed_at: null,
-      records_fetched: null,
-      records_created: null,
-      records_updated: null,
-      records_deleted: null,
-      error_code: null,
-      error_message: null,
-    };
-
-    fromMock = jest.fn().mockImplementation((table: string) => {
-      if (table === 'sync_runs') {
-        const builder = makeQueryBuilder({ data: syncRunRow, error: null });
-        // Every insert/update resolves with the latest syncRunRow snapshot,
-        // mutated by whichever `update({...})` call was made.
-        builder.update = jest
-          .fn()
-          .mockImplementation((patch: Record<string, unknown>) => {
-            Object.assign(syncRunRow, patch);
-            return builder;
-          });
-        builder.single = jest
-          .fn()
-          .mockImplementation(() =>
-            Promise.resolve({ data: syncRunRow, error: null }),
-          );
-        return builder;
-      }
-      throw new Error(`Unexpected table: ${table}`);
-    });
-
-    rpcMock = jest.fn().mockReturnValue({
-      single: jest.fn().mockResolvedValue({
-        data: { created: 0, updated: 0, deleted: 0 },
-        error: null,
-      }),
-    });
-
-    supabase = {
-      getClient: jest.fn().mockReturnValue({ from: fromMock, rpc: rpcMock }),
-    };
+    stub = makeSupabaseStub();
     customerApiClient = { fetchAllUsers: jest.fn() };
     customersService = {
       findById: jest.fn().mockResolvedValue(CUSTOMER),
@@ -118,24 +145,15 @@ describe('SyncService', () => {
     };
 
     service = new SyncService(
-      supabase as unknown as SupabaseService,
+      stub.supabase as unknown as SupabaseService,
       customerApiClient as unknown as CustomerApiClient,
       customersService as unknown as CustomersService,
       config as unknown as ConfigService,
     );
   });
 
-  function mockRpcResult(created: number, updated: number, deleted: number) {
-    rpcMock.mockReturnValue({
-      single: jest.fn().mockResolvedValue({
-        data: { created, updated, deleted },
-        error: null,
-      }),
-    });
-  }
-
   it('creates new users that were never seen before', async () => {
-    mockRpcResult(2, 0, 0);
+    stub.mockComplete(2, 0, 0);
     customerApiClient.fetchAllUsers.mockResolvedValue([
       externalUser('u1'),
       externalUser('u2'),
@@ -147,14 +165,14 @@ describe('SyncService', () => {
     expect(run.recordsCreated).toBe(2);
     expect(run.recordsUpdated).toBe(0);
     expect(run.recordsDeleted).toBe(0);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'sync_users',
+    expect(stub.rpc).toHaveBeenCalledWith(
+      'complete_sync_run',
       expect.objectContaining({ p_customer_id: CUSTOMER.id }),
     );
   });
 
   it('marks previously-known users as updated, not created', async () => {
-    mockRpcResult(0, 1, 0);
+    stub.mockComplete(0, 1, 0);
     customerApiClient.fetchAllUsers.mockResolvedValue([externalUser('u1')]);
 
     const run = await service.syncCustomer();
@@ -164,7 +182,7 @@ describe('SyncService', () => {
   });
 
   it('soft-deletes users that are no longer present in the fetched dataset', async () => {
-    mockRpcResult(0, 1, 1);
+    stub.mockComplete(0, 1, 1);
     customerApiClient.fetchAllUsers.mockResolvedValue([externalUser('u1')]);
 
     const run = await service.syncCustomer();
@@ -181,17 +199,20 @@ describe('SyncService', () => {
 
     expect(run.status).toBe('FAILED');
     expect(run.errorCode).toBe('EXTERNAL_API_UNAUTHORIZED');
-    expect(rpcMock).not.toHaveBeenCalled();
+    expect(stub.rpc).not.toHaveBeenCalledWith(
+      'complete_sync_run',
+      expect.anything(),
+    );
   });
 
-  it('rejects a second concurrent sync for the same customer', async () => {
+  it('rejects a second concurrent sync for the same customer via the database-level lock', async () => {
     let resolveFetch!: (users: ExternalUser[]) => void;
     customerApiClient.fetchAllUsers.mockReturnValue(
       new Promise((resolve) => {
         resolveFetch = resolve;
       }),
     );
-    mockRpcResult(0, 0, 0);
+    stub.mockComplete(0, 0, 0);
 
     const firstRun = service.syncCustomer();
     await expect(service.syncCustomer()).rejects.toBeInstanceOf(

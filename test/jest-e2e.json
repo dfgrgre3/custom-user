@@ -3,6 +3,8 @@
   "rootDir": ".",
   "testRegex": ".e2e-spec.ts$",
   "transform": { "^.+\\.(t|j)s$": "ts-jest" },
-  "transformIgnorePatterns": ["node_modules/(?!@nestjs/(axios|schedule))"],
+  "transformIgnorePatterns": [
+    "node_modules/(?!@nestjs/(axios|common|config|core|platform-express|schedule|swagger|testing)|nestjs-pino)"
+  ],
   "testEnvironment": "node"
 }

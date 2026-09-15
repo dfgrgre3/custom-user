@@ -188,4 +188,211 @@ describe('CustomerApiClient', () => {
     ).rejects.toBeInstanceOf(CustomerApiContractError);
     expect(get).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects a malformed email instead of passing it through', async () => {
+    const get = jest.fn().mockReturnValue(
+      of(
+        pageResponse({
+          data: [
+            {
+              id: '1',
+              name: 'A',
+              email: 'not-an-email',
+              status: 'active',
+              company: { name: 'Co', industry: 'Tech', role: 'Eng' },
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      ),
+    );
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(client.fetchAllUsers(options)).rejects.toBeInstanceOf(
+      CustomerApiContractError,
+    );
+  });
+
+  it('rejects an unparseable createdAt/updatedAt instead of producing Invalid Date', async () => {
+    const get = jest.fn().mockReturnValue(
+      of(
+        pageResponse({
+          data: [
+            {
+              id: '1',
+              name: 'A',
+              email: 'a@example.com',
+              status: 'active',
+              company: { name: 'Co', industry: 'Tech', role: 'Eng' },
+              createdAt: 'not-a-date',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      ),
+    );
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(client.fetchAllUsers(options)).rejects.toBeInstanceOf(
+      CustomerApiContractError,
+    );
+  });
+
+  it('rejects a response with duplicate user ids on the same page', async () => {
+    const duplicateUser = {
+      id: '1',
+      name: 'A',
+      email: 'a@example.com',
+      status: 'active' as const,
+      company: { name: 'Co', industry: 'Tech', role: 'Eng' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const get = jest
+      .fn()
+      .mockReturnValue(
+        of(pageResponse({ data: [duplicateUser, duplicateUser] })),
+      );
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(client.fetchAllUsers(options)).rejects.toBeInstanceOf(
+      CustomerApiContractError,
+    );
+  });
+
+  it('rejects the same user id reappearing across different pages', async () => {
+    const user = (id: string) => ({
+      id,
+      name: 'A',
+      email: 'a@example.com',
+      status: 'active' as const,
+      company: { name: 'Co', industry: 'Tech', role: 'Eng' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const get = jest
+      .fn()
+      .mockReturnValueOnce(
+        of(
+          pageResponse({
+            data: [user('1')],
+            pagination: {
+              page: 1,
+              limit: 1,
+              total: 2,
+              totalPages: 2,
+              hasNextPage: true,
+              hasPrevPage: false,
+            },
+          }),
+        ),
+      )
+      .mockReturnValueOnce(
+        // Same id ('1') reappears on page 2 — should never happen, but if
+        // the underlying dataset shifts mid-pagination it could.
+        of(
+          pageResponse({
+            data: [user('1')],
+            pagination: {
+              page: 2,
+              limit: 1,
+              total: 2,
+              totalPages: 2,
+              hasNextPage: false,
+              hasPrevPage: true,
+            },
+          }),
+        ),
+      );
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(
+      client.fetchAllUsers({ ...options, pageSize: 1 }),
+    ).rejects.toBeInstanceOf(CustomerApiContractError);
+  });
+
+  it('retries a 429 (rate limited) rather than failing immediately', async () => {
+    const get = jest
+      .fn()
+      .mockReturnValueOnce(throwError(() => makeAxiosError(429)))
+      .mockReturnValueOnce(of(pageResponse()));
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    const users = await client.fetchAllUsers({ ...options, maxRetries: 1 });
+
+    expect(users).toEqual([]);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a 408 (request timeout) rather than failing immediately', async () => {
+    const get = jest
+      .fn()
+      .mockReturnValueOnce(throwError(() => makeAxiosError(408)))
+      .mockReturnValueOnce(of(pageResponse()));
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    const users = await client.fetchAllUsers({ ...options, maxRetries: 1 });
+
+    expect(users).toEqual([]);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('still does not retry a plain 400 (not in the retryable set)', async () => {
+    const get = jest
+      .fn()
+      .mockReturnValue(throwError(() => makeAxiosError(400)));
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(
+      client.fetchAllUsers({ ...options, maxRetries: 3 }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors a numeric Retry-After header instead of the default backoff', async () => {
+    jest.useFakeTimers();
+    try {
+      const headers = new AxiosHeaders();
+      headers.set('retry-after', '5');
+      const rateLimited = new AxiosError(
+        'Too Many Requests',
+        '429',
+        undefined,
+        undefined,
+        {
+          status: 429,
+          data: {},
+          statusText: '',
+          headers,
+          config: { headers: new AxiosHeaders() },
+        },
+      );
+      const get = jest
+        .fn()
+        .mockReturnValueOnce(throwError(() => rateLimited))
+        .mockReturnValueOnce(of(pageResponse()));
+      const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+      const resultPromise = client.fetchAllUsers({ ...options, maxRetries: 1 });
+
+      // Flush the first (failing) request's microtask queue before advancing
+      // timers, so the retry's setTimeout has actually been scheduled.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Advancing by exactly the Retry-After duration should be enough to
+      // trigger the retry; the default exponential backoff for attempt 1
+      // (250ms) would already have fired well before this point if the
+      // header were being ignored, so this also implicitly confirms the
+      // header value — not the default — is what's being waited on.
+      jest.advanceTimersByTime(5000);
+      const users = await resultPromise;
+
+      expect(users).toEqual([]);
+      expect(get).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

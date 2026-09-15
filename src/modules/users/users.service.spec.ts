@@ -1,6 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
+import { CustomersService } from '../customers/customers.service';
 import { UsersRepository } from './users.repository';
 import { UsersService } from './users.service';
+
+const DEFAULT_CUSTOMER = { id: 'default-customer-id' };
 
 const sampleEntity = {
   id: 'u1',
@@ -21,6 +24,12 @@ const sampleEntity = {
   updatedAt: new Date('2026-01-02T00:00:00.000Z'),
   deletedAt: null,
 };
+
+function makeCustomersService() {
+  return {
+    getOrCreateDefaultCustomer: jest.fn().mockResolvedValue(DEFAULT_CUSTOMER),
+  } as unknown as CustomersService;
+}
 
 describe('UsersService', () => {
   it('wraps repository results into a paginated public response', async () => {
@@ -52,6 +61,7 @@ describe('UsersService', () => {
     };
     const service = new UsersService(
       usersRepository as unknown as UsersRepository,
+      makeCustomersService(),
     );
 
     const result = await service.list({ page: 1, limit: 20 });
@@ -68,6 +78,29 @@ describe('UsersService', () => {
       company: 'Acme',
       isDeleted: false,
     });
+    expect(usersRepository.findMany).toHaveBeenCalledWith(
+      DEFAULT_CUSTOMER.id,
+      expect.anything(),
+    );
+  });
+
+  it('scopes to an explicit customerId instead of the default customer when given', async () => {
+    const usersRepository = {
+      findMany: jest.fn().mockResolvedValue({ data: [], total: 0 }),
+    };
+    const customersService = makeCustomersService();
+    const service = new UsersService(
+      usersRepository as unknown as UsersRepository,
+      customersService,
+    );
+
+    await service.list({ page: 1, limit: 20 }, 'other-customer-id');
+
+    expect(usersRepository.findMany).toHaveBeenCalledWith(
+      'other-customer-id',
+      expect.anything(),
+    );
+    expect(customersService.getOrCreateDefaultCustomer).not.toHaveBeenCalled();
   });
 
   it('computes totalPages as at least 1 even with zero results', async () => {
@@ -76,6 +109,7 @@ describe('UsersService', () => {
     };
     const service = new UsersService(
       usersRepository as unknown as UsersRepository,
+      makeCustomersService(),
     );
 
     const result = await service.list({ page: 1, limit: 20 });
@@ -89,6 +123,7 @@ describe('UsersService', () => {
     };
     const service = new UsersService(
       usersRepository as unknown as UsersRepository,
+      makeCustomersService(),
     );
 
     const result = await service.getById('u1');
@@ -98,16 +133,37 @@ describe('UsersService', () => {
       name: 'Ada Lovelace',
       company: 'Acme',
     });
+    expect(usersRepository.findById).toHaveBeenCalledWith(
+      DEFAULT_CUSTOMER.id,
+      'u1',
+    );
   });
 
   it('getById throws NotFoundException when no user matches', async () => {
     const usersRepository = { findById: jest.fn().mockResolvedValue(null) };
     const service = new UsersService(
       usersRepository as unknown as UsersRepository,
+      makeCustomersService(),
     );
 
     await expect(service.getById('missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it("getById scoped to a different customer never returns another customer's user with the same id", async () => {
+    // The repository itself enforces this via `.eq('customer_id', ...)`;
+    // this test documents that the service always passes a customer scope
+    // through rather than ever calling findById with only an id.
+    const usersRepository = { findById: jest.fn().mockResolvedValue(null) };
+    const service = new UsersService(
+      usersRepository as unknown as UsersRepository,
+      makeCustomersService(),
+    );
+
+    await expect(service.getById('u1', 'customer-a')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(usersRepository.findById).toHaveBeenCalledWith('customer-a', 'u1');
   });
 });

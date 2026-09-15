@@ -1,8 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 
 export class ListSyncRunsQueryDto {
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Customer to scope this query to. Defaults to the configured default customer when omitted — never returns runs across customers.',
+  })
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()
   @Type(() => Number)
