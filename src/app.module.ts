@@ -31,11 +31,7 @@ import { HealthModule } from './modules/health/health.module';
             : { target: 'pino-pretty', options: { singleLine: true } },
         level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
         redact: {
-          paths: [
-            'req.headers.authorization',
-            'req.headers["x-admin-token"]',
-            'req.headers.cookie',
-          ],
+          paths: ['req.headers.authorization', 'req.headers.cookie'],
           censor: '[REDACTED]',
         },
         autoLogging: true,

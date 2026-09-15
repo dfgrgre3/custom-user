@@ -1,35 +1,18 @@
+import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
-  Controller,
-  Get,
-  Param,
-  ParseUUIDPipe,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
-import {
-  ApiBearerAuth,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { SupabaseAuthGuard } from '../../common/auth/supabase-auth.guard';
 import { GetUserQueryDto } from './dto/get-user-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { PaginatedUsersResponseDto } from './dto/paginated-users-response.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UsersService } from './users.service';
 
-/**
- * Every route here holds real customer PII (name, email, phone, company).
- * Requires a valid Supabase Auth bearer token for any signed-in user —
- * see decision on authentication in DESIGN.md.
- */
+/** Every route here exposes synchronized assessment data. */
 @ApiTags('Users')
-@ApiBearerAuth()
-@ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
-@UseGuards(SupabaseAuthGuard)
 @Controller({ path: 'users', version: '1' })
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}

@@ -7,24 +7,17 @@ import {
   HttpStatus,
   Post,
   Query,
-  UseGuards,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
 import {
-  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiOkResponse,
   ApiOperation,
   ApiPropertyOptional,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { IsOptional, IsUUID } from 'class-validator';
-import {
-  Roles,
-  SupabaseAuthGuard,
-} from '../../common/auth/supabase-auth.guard';
 import { SyncInProgressError } from '../../common/errors/errors';
 import { ListSyncRunsQueryDto } from './dto/list-sync-runs-query.dto';
 import { PaginatedSyncRunsResponseDto } from './dto/paginated-sync-runs-response.dto';
@@ -43,17 +36,7 @@ class TriggerSyncDto {
   customerId?: string;
 }
 
-/**
- * Triggers writes against the customer dataset — restricted to the
- * `admin` role rather than any authenticated user.
- */
 @ApiTags('Sync')
-@ApiBearerAuth()
-@ApiUnauthorizedResponse({
-  description: 'Missing/invalid token, or not an admin.',
-})
-@UseGuards(SupabaseAuthGuard)
-@Roles('admin')
 @Controller({ path: 'sync', version: VERSION_NEUTRAL })
 export class SyncController {
   constructor(private readonly syncService: SyncService) {}
@@ -102,20 +85,11 @@ export class SyncController {
 }
 
 /**
- * Separate controller (rather than a second method on SyncController) so
- * this endpoint can live under the normal `/api/v1` prefix and versioning,
- * while POST /sync/users keeps its own unversioned, unprefixed route.
- *
- * Operational history — restricted to admin/operations roles, same as the
- * sync trigger itself, rather than any authenticated user.
+ * Separate controller so this endpoint can live under the normal `/api/v1`
+ * prefix and versioning, while POST /sync/users keeps its own unversioned,
+ * unprefixed route.
  */
 @ApiTags('Sync')
-@ApiBearerAuth()
-@ApiUnauthorizedResponse({
-  description: 'Missing/invalid token, or not an admin.',
-})
-@UseGuards(SupabaseAuthGuard)
-@Roles('admin')
 @Controller({ path: 'sync', version: '1' })
 export class SyncRunsController {
   constructor(private readonly syncService: SyncService) {}

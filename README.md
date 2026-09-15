@@ -14,8 +14,8 @@ npm run frontend:install  # frontend deps (frontend/node_modules)
 
 cp .env.example .env                              # backend config
 cp frontend/.env.local.example frontend/.env.local  # frontend config
-# Edit .env: set SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY
-# from your Supabase project (Project Settings > API), and CUSTOMER_API_TOKEN
+# Edit .env: set SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY from your Supabase
+# project (Project Settings > API), and CUSTOMER_API_TOKEN
 # to the admin token for the customer API.
 # Edit frontend/.env.local: set NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 # (same project, publishable/anon key only).
@@ -33,7 +33,7 @@ npm run dev:all   # runs backend (:3000) and frontend (:3001) together
 
 Run them separately instead of `dev:all` with `npm run start:dev` (backend) and `npm run frontend:dev` (frontend) in two terminals.
 
-Or run the backend in Docker as a self-contained production build, pointed at your Supabase project via environment variables (the frontend runs separately via `npm run frontend:dev`, since it is not containerized here). The image has no bind mount and no local database — it only needs `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and the `CUSTOMER_*` variables set in your shell or a `.env` file read by Docker Compose:
+Or run the backend in Docker as a self-contained production build, pointed at your Supabase project via environment variables (the frontend runs separately via `npm run frontend:dev`, since it is not containerized here). The image has no bind mount and no local database — it only needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the `CUSTOMER_*` variables set in your shell or a `.env` file read by Docker Compose:
 
 ```bash
 docker compose up --build
@@ -46,7 +46,6 @@ All configuration is environment variables (`.env`, see `.env.example`):
 | Variable | Purpose |
 | --- | --- |
 | `SUPABASE_URL` | Your Supabase project URL (`https://<ref>.supabase.co`) |
-| `SUPABASE_ANON_KEY` | Supabase anon/public API key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key — server-side only, bypasses RLS, never expose to a client |
 | `SUPABASE_DB_URL` | Direct Postgres connection string, used only by `npm run supabase:schema` |
 | `CUSTOMER_API_BASE_URL` | Base URL of the customer's API (default: the assessment API) |

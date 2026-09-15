@@ -7,7 +7,6 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { SupabaseAuthGuard } from '../src/common/auth/supabase-auth.guard';
 import { GlobalExceptionFilter } from '../src/common/filters/global-exception.filter';
 import { SupabaseService } from '../src/infrastructure/database/supabase.service';
 import { CustomerApiClient } from '../src/integrations/customer-api/customer-api.client';
@@ -20,13 +19,6 @@ import { afterAll, expect, jest } from '@jest/globals';
  * Supabase project (see SUPABASE_* env vars) with the customer API client
  * replaced by a fake so the test is deterministic and never depends on
  * network access.
- *
- * The `SupabaseAuthGuard` is overridden rather than exercised for real:
- * verifying it end-to-end would require a real signed-in Supabase Auth
- * user and a real JWT, which is out of scope for this suite (the guard
- * itself has its own coverage — see supabase-auth.guard behavior, exercised
- * indirectly via main.ts's route wiring). This lets the suite focus on the
- * sync/read behavior the guard sits in front of.
  */
 describe('Users & Sync (e2e)', () => {
   let app: INestApplication;
@@ -68,8 +60,6 @@ describe('Users & Sync (e2e)', () => {
     })
       .overrideProvider(CustomerApiClient)
       .useValue({ fetchAllUsers })
-      .overrideGuard(SupabaseAuthGuard)
-      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -285,8 +275,3 @@ describe('Users & Sync (e2e)', () => {
     expect(startedTimes).toEqual(sorted);
   });
 });
-
-function beforeAll(arg0: () => Promise<void>) {
-  throw new Error('Function not implemented.');
-}
-

@@ -12,14 +12,8 @@ async function bootstrap(): Promise<void> {
 
   const configService = app.get(ConfigService);
 
-  // Restricted to the configured frontend origin (FRONTEND_ORIGIN) rather
-  // than left open to any origin: with authentication now in place, a
-  // wildcard CORS policy would let any site read this API's responses using
-  // a visitor's own valid bearer token if they had one, or otherwise widen
-  // the attack surface for no benefit. No FRONTEND_ORIGIN configured means
-  // no cross-origin browser access — same-origin and non-browser clients
-  // (curl, server-to-server) are unaffected, since CORS is a browser-only
-  // restriction.
+  // Keep browser access limited to the configured assessment UI origin.
+  // Non-browser clients are unaffected because CORS is browser-only.
   const frontendOrigin = configService.get<string>('app.frontendOrigin');
   app.enableCors({
     origin: frontendOrigin ?? false,

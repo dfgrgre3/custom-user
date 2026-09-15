@@ -19,9 +19,7 @@ export default registerAs('app', () => {
 
     supabase: {
       url: env.SUPABASE_URL,
-      anonKey: env.SUPABASE_ANON_KEY,
       serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
-      jwksUrl: env.SUPABASE_JWKS_URL,
     },
 
     frontendOrigin: env.FRONTEND_ORIGIN,
