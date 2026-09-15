@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --surface: #f7f8fb;
+  --surface-hover: #eef0f7;
+  --border: #e3e6ef;
+  --foreground: #14151f;
+  --muted: #6b7086;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef1fd;
+
+  --ok: #15803d;
+  --ok-soft: #ecfdf3;
+  --warn: #b45309;
+  --warn-soft: #fef6ec;
+  --err: #b91c1c;
+  --err-soft: #fef2f2;
+  --run: #1d4ed8;
+  --run-soft: #eef4ff;
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-err: var(--err);
+  --color-err-soft: var(--err-soft);
+  --color-run: var(--run);
+  --color-run-soft: var(--run-soft);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
