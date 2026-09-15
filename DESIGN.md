@@ -87,6 +87,8 @@ It's a **separate Next.js application** in `frontend/` (its own `package.json`, 
 
 Three routes, one per bonus/requirement: `/` (list, filter, paginate, trigger sync — the minimum required), `/users/[id]` (user detail, added as a bonus), and `/sync-history` (operational history of every sync run, added as a bonus, backed by the new `GET /api/v1/sync/runs` endpoint). `npm run dev:all` in the backend directory runs both servers together for convenience; they remain independently runnable and independently deployable.
 
+The frontend also holds its own direct Supabase client (`frontend/src/lib/supabase.ts`), separate from the backend's. It's initialized with the publishable/anon key only (`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`), safe to ship to the browser since Supabase's Row Level Security — not secrecy of the key — is what gates access. It exists for any future feature that talks to Supabase directly from the browser (e.g. Supabase Auth); today's user/sync-run data still flows exclusively through the backend API, which is the only place holding the service role key.
+
 ## What was verified vs. assumed
 
 Everything in "Key design decisions" above reflects the **actual, verified** contract once an admin token was obtained (see README/AI-usage note) — the OpenAPI document was fetched and used directly, and every field mapping was checked against real API responses (130 real synchronized users, confirmed via `GET /api/users?limit=2` and later a full sync). Nothing in the shipped mapper or schema is a guess.
@@ -99,7 +101,7 @@ The one genuine design choice (not a contract fact) is **soft vs. hard deletion*
 - **Retry logic** — exponential backoff on transient failures, no retry on client errors (see decision #4).
 - **Scheduled sync** — optional, via `SYNC_CRON`; disabled by default.
 - **Tests** — unit tests (mapper, HTTP client retry/classification, sync orchestration with a mocked Supabase client, users service) and e2e tests (real Supabase project, mocked customer API client) covering idempotency, deletion, reactivation, and failure-safety.
-- **Docker** — `docker-compose.yml` (app only, pointed at Supabase via env vars) and a multi-stage `Dockerfile`.
+- **Docker** — `docker-compose.yml` runs the production-stage image only (no bind mount, no local database) pointed at Supabase entirely through environment variables; a multi-stage `Dockerfile` also supports a `development` target for local (non-Docker) work.
 - **API documentation** — Swagger/OpenAPI at `/api/docs`.
 - **Structured logging** — `sync.completed` / `sync.failed` log lines with customer id, record counts, and error codes (no payloads or secrets).
 - **Additional UI pages** — a user-detail page and a sync-history page (see "UI" above), beyond the minimum "view, filter, sync" requirement.

@@ -27,9 +27,9 @@ SUPABASE_DB_URL="postgresql://postgres:<password>@db.<ref>.supabase.co:5432/post
 npm run dev:all   # runs backend (:3000) and frontend (:3001) together
 ```
 
-- UI: `http://localhost:3001`
-- Backend API: `http://localhost:3000`
-- Swagger/OpenAPI docs: `http://localhost:3000/api/docs`
+- UI: the frontend dev server's printed URL (see `frontend/package.json` for its configured port)
+- Backend API: the backend dev server's printed URL (see `PORT` in `.env`)
+- Swagger/OpenAPI docs: `<backend URL>/api/docs`
 
 Run them separately instead of `dev:all` with `npm run start:dev` (backend) and `npm run frontend:dev` (frontend) in two terminals.
 
@@ -64,7 +64,7 @@ Triggers a synchronization run. Safe to call repeatedly (idempotent). Optionally
 Returns `200` even when the sync fails, with `status: "FAILED"` and an `errorCode`/`errorMessage` — a failed sync is a normal, expected outcome, not a server error. A concurrent call to a customer that's already syncing returns `409 Conflict`.
 
 ```bash
-curl -X POST http://localhost:3000/sync/users
+curl -X POST <backend URL>/sync/users
 ```
 
 ```json
@@ -93,7 +93,7 @@ Reads from our own database only — never calls the customer API. Supports:
 | `page`, `limit` | Pagination (`limit` max 100, default 20) |
 
 ```bash
-curl "http://localhost:3000/api/v1/users?company=Acme&page=1&limit=20"
+curl "<backend URL>/api/v1/users?company=Acme&page=1&limit=20"
 ```
 
 ### `GET /api/v1/users/:id`
@@ -105,7 +105,7 @@ Returns one synchronized user by internal id. `404` if no user has that id; `400
 Paginated operational history of every `POST /sync/users` call, most recent first — status, duration, and record counts for each run.
 
 ```bash
-curl "http://localhost:3000/api/v1/sync/runs?page=1&limit=20"
+curl "<backend URL>/api/v1/sync/runs?page=1&limit=20"
 ```
 
 Full interactive documentation (request/response schemas) is at `/api/docs`.
