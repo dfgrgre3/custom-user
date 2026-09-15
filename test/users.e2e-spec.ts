@@ -12,7 +12,7 @@ import { SupabaseService } from '../src/infrastructure/database/supabase.service
 import { CustomerApiClient } from '../src/integrations/customer-api/customer-api.client';
 import { ExternalUser } from '../src/integrations/customer-api/customer-api.types';
 import { describe, it } from 'node:test';
-import { afterAll, expect, jest } from '@jest/globals';
+import { afterAll, beforeAll, expect, jest } from '@jest/globals';
 
 /**
  * End-to-end coverage for the two required endpoints, run against a real
