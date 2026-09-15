@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { SyncRun } from '@prisma/client';
+import { SyncRun } from '../../../domain/types';
 
 export class SyncRunResponseDto {
   @ApiProperty() id!: string;

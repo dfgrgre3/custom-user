@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, User } from '@prisma/client';
-import { PrismaService } from '../../infrastructure/database/prisma.service';
+import { SupabaseService } from '../../infrastructure/database/supabase.service';
+import { User, UserRow, mapUserRow } from '../../domain/types';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 
 export interface FindUsersResult {
@@ -10,49 +10,68 @@ export interface FindUsersResult {
 
 @Injectable()
 export class UsersRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly supabase: SupabaseService) {}
 
   async findMany(query: ListUsersQueryDto): Promise<FindUsersResult> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    const where: Prisma.UserWhereInput = {
-      deletedAt: query.includeDeleted ? undefined : null,
-    };
+    let builder = this.supabase
+      .getClient()
+      .from('users')
+      .select('*', { count: 'exact' });
+
+    builder = query.includeDeleted ? builder : builder.is('deleted_at', null);
 
     if (query.company) {
-      where.companyName = { contains: query.company, mode: 'insensitive' };
+      builder = builder.ilike('company_name', `%${query.company}%`);
     }
     if (query.status) {
-      where.status = query.status as User['status'];
+      builder = builder.eq('status', query.status);
     }
     const search = query.search?.trim();
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { externalUserId: { contains: search, mode: 'insensitive' } },
-        { companyName: { contains: search, mode: 'insensitive' } },
-        { companyIndustry: { contains: search, mode: 'insensitive' } },
-        { companyRole: { contains: search, mode: 'insensitive' } },
-        { companyWebsite: { contains: search, mode: 'insensitive' } },
-      ];
+      const pattern = `%${search}%`;
+      builder = builder.or(
+        [
+          `name.ilike.${pattern}`,
+          `email.ilike.${pattern}`,
+          `external_user_id.ilike.${pattern}`,
+          `company_name.ilike.${pattern}`,
+          `company_industry.ilike.${pattern}`,
+          `company_role.ilike.${pattern}`,
+          `company_website.ilike.${pattern}`,
+        ].join(','),
+      );
     }
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.user.findMany({
-        where,
-        orderBy: { updatedAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
 
-    return { data, total };
+    const { data, count, error } = await builder
+      .order('updated_at', { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to list users: ${error.message}`);
+    }
+
+    return {
+      data: ((data ?? []) as UserRow[]).map(mapUserRow),
+      total: count ?? 0,
+    };
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('users')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle<UserRow>();
+    if (error) {
+      throw new Error(`Failed to look up user: ${error.message}`);
+    }
+    return data ? mapUserRow(data) : null;
   }
 }

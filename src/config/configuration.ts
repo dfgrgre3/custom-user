@@ -3,7 +3,12 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('app', () => ({
   environment: process.env.NODE_ENV ?? 'development',
   port: Number.parseInt(process.env.PORT ?? '3000', 10),
-  databaseUrl: process.env.DATABASE_URL ?? '',
+
+  supabase: {
+    url: process.env.SUPABASE_URL ?? '',
+    anonKey: process.env.SUPABASE_ANON_KEY ?? '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  },
 
   customer: {
     name: process.env.CUSTOMER_NAME ?? 'Assessment API',

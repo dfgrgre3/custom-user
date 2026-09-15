@@ -2,7 +2,7 @@
 
 ## Overview
 
-NestJS + TypeScript + PostgreSQL (Prisma). A modular monolith: `integrations/customer-api` isolates the external contract, `modules/sync` orchestrates synchronization, `modules/users` exposes the read API, `modules/customers` owns customer identity. See [README.md](README.md) for setup and endpoints.
+NestJS + TypeScript + Supabase (PostgreSQL). A modular monolith: `integrations/customer-api` isolates the external contract, `modules/sync` orchestrates synchronization, `modules/users` exposes the read API, `modules/customers` owns customer identity. See [README.md](README.md) for setup and endpoints.
 
 ## The external API contract
 
@@ -50,7 +50,7 @@ Unique constraint on `(customerId, externalUserId)`. Every sync is an upsert on 
 
 1. Fetch and fully validate the external dataset (all pages) *before* any database write.
 2. If the fetch fails (network error, 401, 5xx) at any point, nothing is written — the previous synchronized dataset is completely untouched. The failure is recorded as a `SyncRun` with `status: FAILED` and a safe error code/message (no stack traces, tokens, or raw payloads).
-3. If the fetch succeeds, upserts + deletion-marking + the `SyncRun` completion all happen inside one Prisma transaction — a database error mid-write rolls back everything, so a sync never leaves half-applied changes.
+3. If the fetch succeeds, upserts + deletion-marking happen atomically inside a single Postgres function (`sync_users`, see `supabase/schema.sql`), invoked with one `.rpc()` call — the Supabase JS client has no client-side multi-statement transaction API, so the atomicity lives in the database function itself rather than in application code. The `SyncRun` completion is then recorded as a separate write; a database error during `sync_users` rolls back that function's own work, so a sync never leaves half-applied user changes.
 
 This was verified by pointing the client at an invalid token: the sync run failed immediately (no retries — see below) with `errorCode: EXTERNAL_API_UNAUTHORIZED`, and the previously synced 130 users were confirmed still present and unchanged.
 
@@ -61,7 +61,7 @@ Transient failures (network errors, 5xx) are retried with exponential backoff (2
 ### 5. Schema independence (three separate shapes)
 
 - `ExternalUser` (`src/integrations/customer-api/customer-api.types.ts`) — exactly the customer API's shape. Nothing outside `integrations/customer-api/` may import or depend on it.
-- `User` (Prisma model) — our internal representation: flattened company fields (searchable, indexed), our own `status` enum, our own timestamps (`createdAt`/`updatedAt` = our bookkeeping, `externalCreatedAt`/`externalUpdatedAt` = the customer's).
+- `User` (`src/domain/types.ts`) — our internal representation: flattened company fields (searchable, indexed), our own `status` enum, our own timestamps (`createdAt`/`updatedAt` = our bookkeeping, `externalCreatedAt`/`externalUpdatedAt` = the customer's).
 - `UserResponseDto` (`src/modules/users/dto/user-response.dto.ts`) — the public API shape: renamed/reshaped again (`company` as a flat string, `isDeleted` boolean, `syncedAt`), independent of both of the above.
 
 A single `mapExternalUserToSyncedUserData` function is the only bridge between the first two; `UserResponseDto.fromEntity` is the only bridge to the third. This means the customer API changing its field names, or us changing our database schema, doesn't ripple through the whole codebase.
@@ -98,8 +98,8 @@ The one genuine design choice (not a contract fact) is **soft vs. hard deletion*
 - **Pagination** — both directions: the customer API client fetches all pages before syncing; `GET /api/v1/users` paginates its own results.
 - **Retry logic** — exponential backoff on transient failures, no retry on client errors (see decision #4).
 - **Scheduled sync** — optional, via `SYNC_CRON`; disabled by default.
-- **Tests** — unit tests (mapper, HTTP client retry/classification, sync orchestration with a mocked client, users service) and e2e tests (real Postgres, mocked customer API client) covering idempotency, deletion, reactivation, and failure-safety.
-- **Docker** — `docker-compose.yml` (app + Postgres) and a multi-stage `Dockerfile`.
+- **Tests** — unit tests (mapper, HTTP client retry/classification, sync orchestration with a mocked Supabase client, users service) and e2e tests (real Supabase project, mocked customer API client) covering idempotency, deletion, reactivation, and failure-safety.
+- **Docker** — `docker-compose.yml` (app only, pointed at Supabase via env vars) and a multi-stage `Dockerfile`.
 - **API documentation** — Swagger/OpenAPI at `/api/docs`.
 - **Structured logging** — `sync.completed` / `sync.failed` log lines with customer id, record counts, and error codes (no payloads or secrets).
 - **Additional UI pages** — a user-detail page and a sync-history page (see "UI" above), beyond the minimum "view, filter, sync" requirement.

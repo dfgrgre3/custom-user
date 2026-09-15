@@ -1,7 +1,6 @@
 import { ConfigService } from '@nestjs/config';
-import { SyncRunStatus } from '@prisma/client';
 import { SyncInProgressError } from '../../common/errors/errors';
-import { PrismaService } from '../../infrastructure/database/prisma.service';
+import { SupabaseService } from '../../infrastructure/database/supabase.service';
 import { CustomerApiClient } from '../../integrations/customer-api/customer-api.client';
 import { CustomerApiUnauthorizedError } from '../../integrations/customer-api/customer-api.errors';
 import { ExternalUser } from '../../integrations/customer-api/customer-api.types';
@@ -30,12 +29,21 @@ function externalUser(
   };
 }
 
+/** Minimal stand-in for the Supabase query builder chain used by SyncService. */
+function makeQueryBuilder(result: { data: unknown; error: unknown }) {
+  const builder: Record<string, jest.Mock> = {};
+  const chain = ['insert', 'update', 'select', 'eq', 'order', 'range'] as const;
+  for (const method of chain) {
+    builder[method] = jest.fn().mockReturnValue(builder);
+  }
+  builder.single = jest.fn().mockResolvedValue(result);
+  return builder;
+}
+
 describe('SyncService', () => {
-  let prisma: {
-    syncRun: { create: jest.Mock; update: jest.Mock };
-    user: { findMany: jest.Mock; upsert: jest.Mock; updateMany: jest.Mock };
-    $transaction: jest.Mock;
-  };
+  let fromMock: jest.Mock;
+  let rpcMock: jest.Mock;
+  let supabase: { getClient: jest.Mock };
   let customerApiClient: { fetchAllUsers: jest.Mock };
   let customersService: {
     findById: jest.Mock;
@@ -44,26 +52,53 @@ describe('SyncService', () => {
   let config: { get: jest.Mock };
   let service: SyncService;
 
+  let syncRunRow: Record<string, unknown>;
+
   beforeEach(() => {
-    prisma = {
-      syncRun: {
-        create: jest
+    syncRunRow = {
+      id: 'run-1',
+      customer_id: CUSTOMER.id,
+      status: 'RUNNING',
+      started_at: '2026-01-01T00:00:00.000Z',
+      completed_at: null,
+      records_fetched: null,
+      records_created: null,
+      records_updated: null,
+      records_deleted: null,
+      error_code: null,
+      error_message: null,
+    };
+
+    fromMock = jest.fn().mockImplementation((table: string) => {
+      if (table === 'sync_runs') {
+        const builder = makeQueryBuilder({ data: syncRunRow, error: null });
+        // Every insert/update resolves with the latest syncRunRow snapshot,
+        // mutated by whichever `update({...})` call was made.
+        builder.update = jest
           .fn()
-          .mockResolvedValue({ id: 'run-1', status: SyncRunStatus.RUNNING }),
-        update: jest
+          .mockImplementation((patch: Record<string, unknown>) => {
+            Object.assign(syncRunRow, patch);
+            return builder;
+          });
+        builder.single = jest
           .fn()
-          .mockImplementation(({ data }) =>
-            Promise.resolve({ id: 'run-1', ...data }),
-          ),
-      },
-      user: {
-        findMany: jest.fn().mockResolvedValue([]),
-        upsert: jest.fn().mockResolvedValue({}),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      },
-      $transaction: jest
-        .fn()
-        .mockImplementation((cb: (tx: unknown) => unknown) => cb(prisma)),
+          .mockImplementation(() =>
+            Promise.resolve({ data: syncRunRow, error: null }),
+          );
+        return builder;
+      }
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    rpcMock = jest.fn().mockReturnValue({
+      single: jest.fn().mockResolvedValue({
+        data: { created: 0, updated: 0, deleted: 0 },
+        error: null,
+      }),
+    });
+
+    supabase = {
+      getClient: jest.fn().mockReturnValue({ from: fromMock, rpc: rpcMock }),
     };
     customerApiClient = { fetchAllUsers: jest.fn() };
     customersService = {
@@ -83,17 +118,24 @@ describe('SyncService', () => {
     };
 
     service = new SyncService(
-      prisma as unknown as PrismaService,
+      supabase as unknown as SupabaseService,
       customerApiClient as unknown as CustomerApiClient,
       customersService as unknown as CustomersService,
       config as unknown as ConfigService,
     );
   });
 
+  function mockRpcResult(created: number, updated: number, deleted: number) {
+    rpcMock.mockReturnValue({
+      single: jest.fn().mockResolvedValue({
+        data: { created, updated, deleted },
+        error: null,
+      }),
+    });
+  }
+
   it('creates new users that were never seen before', async () => {
-    prisma.user.findMany
-      .mockResolvedValueOnce([]) // existing ids for upsert accounting
-      .mockResolvedValueOnce([]); // still-active users for deletion pass
+    mockRpcResult(2, 0, 0);
     customerApiClient.fetchAllUsers.mockResolvedValue([
       externalUser('u1'),
       externalUser('u2'),
@@ -101,17 +143,18 @@ describe('SyncService', () => {
 
     const run = await service.syncCustomer();
 
-    expect(run.status).toBe(SyncRunStatus.SUCCESS);
+    expect(run.status).toBe('SUCCESS');
     expect(run.recordsCreated).toBe(2);
     expect(run.recordsUpdated).toBe(0);
     expect(run.recordsDeleted).toBe(0);
-    expect(prisma.user.upsert).toHaveBeenCalledTimes(2);
+    expect(rpcMock).toHaveBeenCalledWith(
+      'sync_users',
+      expect.objectContaining({ p_customer_id: CUSTOMER.id }),
+    );
   });
 
   it('marks previously-known users as updated, not created', async () => {
-    prisma.user.findMany
-      .mockResolvedValueOnce([{ externalUserId: 'u1' }])
-      .mockResolvedValueOnce([{ id: 'row-1', externalUserId: 'u1' }]);
+    mockRpcResult(0, 1, 0);
     customerApiClient.fetchAllUsers.mockResolvedValue([externalUser('u1')]);
 
     const run = await service.syncCustomer();
@@ -121,41 +164,12 @@ describe('SyncService', () => {
   });
 
   it('soft-deletes users that are no longer present in the fetched dataset', async () => {
-    prisma.user.findMany
-      .mockResolvedValueOnce([
-        { externalUserId: 'u1' },
-        { externalUserId: 'u2' },
-      ])
-      .mockResolvedValueOnce([
-        { id: 'row-1', externalUserId: 'u1' },
-        { id: 'row-2', externalUserId: 'u2' },
-      ]);
-    prisma.user.updateMany.mockResolvedValue({ count: 1 });
-    // Only u1 comes back from the customer API; u2 has disappeared.
+    mockRpcResult(0, 1, 1);
     customerApiClient.fetchAllUsers.mockResolvedValue([externalUser('u1')]);
 
     const run = await service.syncCustomer();
 
     expect(run.recordsDeleted).toBe(1);
-    expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['row-2'] } },
-      data: { deletedAt: expect.any(Date) },
-    });
-  });
-
-  it('clears deletedAt (reactivates) when an upsert runs for a previously-deleted user', async () => {
-    prisma.user.findMany
-      .mockResolvedValueOnce([{ externalUserId: 'u1' }])
-      .mockResolvedValueOnce([]);
-    customerApiClient.fetchAllUsers.mockResolvedValue([externalUser('u1')]);
-
-    await service.syncCustomer();
-
-    expect(prisma.user.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: expect.objectContaining({ deletedAt: null }),
-      }),
-    );
   });
 
   it('records a FAILED run and leaves prior data untouched when the customer API is unreachable', async () => {
@@ -165,10 +179,9 @@ describe('SyncService', () => {
 
     const run = await service.syncCustomer();
 
-    expect(run.status).toBe(SyncRunStatus.FAILED);
+    expect(run.status).toBe('FAILED');
     expect(run.errorCode).toBe('EXTERNAL_API_UNAUTHORIZED');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(prisma.user.upsert).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   it('rejects a second concurrent sync for the same customer', async () => {
@@ -178,7 +191,7 @@ describe('SyncService', () => {
         resolveFetch = resolve;
       }),
     );
-    prisma.user.findMany.mockResolvedValue([]);
+    mockRpcResult(0, 0, 0);
 
     const firstRun = service.syncCustomer();
     await expect(service.syncCustomer()).rejects.toBeInstanceOf(

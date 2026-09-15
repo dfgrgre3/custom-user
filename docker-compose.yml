@@ -2,11 +2,13 @@ services:
   app:
     build:
       context: .
-      target: development
+      target: production
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/customer_user_sync?schema=public
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       CUSTOMER_API_BASE_URL: ${CUSTOMER_API_BASE_URL:-https://assessment-api-gamma.vercel.app}
       CUSTOMER_API_TOKEN: ${CUSTOMER_API_TOKEN:-}
       CUSTOMER_NAME: ${CUSTOMER_NAME:-Assessment API}
@@ -16,28 +18,3 @@ services:
       SYNC_CRON: ${SYNC_CRON:-}
     ports:
       - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: customer_user_sync
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "55432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d customer_user_sync"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:

@@ -17,7 +17,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { IsOptional, IsUUID } from 'class-validator';
-import { SyncRunStatus } from '@prisma/client';
 import { SyncInProgressError } from '../../common/errors/errors';
 import { ListSyncRunsQueryDto } from './dto/list-sync-runs-query.dto';
 import { PaginatedSyncRunsResponseDto } from './dto/paginated-sync-runs-response.dto';
@@ -66,7 +65,7 @@ export class SyncController {
 
     return {
       syncRunId: run.id,
-      status: run.status === SyncRunStatus.SUCCESS ? 'SUCCESS' : 'FAILED',
+      status: run.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
       startedAt: run.startedAt,
       completedAt: run.completedAt!,
       recordsFetched: run.recordsFetched ?? 0,

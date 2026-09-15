@@ -7,7 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/infrastructure/database/prisma.service';
+import { SupabaseService } from '../src/infrastructure/database/supabase.service';
 import { CustomerApiClient } from '../src/integrations/customer-api/customer-api.client';
 import { ExternalUser } from '../src/integrations/customer-api/customer-api.types';
 
@@ -18,7 +18,7 @@ import { ExternalUser } from '../src/integrations/customer-api/customer-api.type
  */
 describe('Users & Sync (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
+  let supabase: SupabaseService;
   const fetchAllUsers = jest.fn<Promise<ExternalUser[]>, []>();
 
   const externalUsers: ExternalUser[] = [
@@ -66,19 +66,22 @@ describe('Users & Sync (e2e)', () => {
     );
     await app.init();
 
-    prisma = app.get(PrismaService);
+    supabase = app.get(SupabaseService);
     const config = app.get(ConfigService);
+    const client = supabase.getClient();
     // Ensure a clean customer row scoped to this test run.
-    await prisma.user.deleteMany({});
-    await prisma.syncRun.deleteMany({});
-    await prisma.customer.deleteMany({
-      where: { name: config.get('app.customer.name') },
-    });
+    await client.from('users').delete().not('id', 'is', null);
+    await client.from('sync_runs').delete().not('id', 'is', null);
+    await client
+      .from('customers')
+      .delete()
+      .eq('name', config.get('app.customer.name'));
   });
 
   afterAll(async () => {
-    await prisma.user.deleteMany({});
-    await prisma.syncRun.deleteMany({});
+    const client = supabase.getClient();
+    await client.from('users').delete().not('id', 'is', null);
+    await client.from('sync_runs').delete().not('id', 'is', null);
     await app.close();
   });
 

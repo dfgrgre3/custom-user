@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { User } from '@prisma/client';
+import { User } from '../../../domain/types';
 
 /**
  * Public shape returned by our API. Deliberately independent of both the

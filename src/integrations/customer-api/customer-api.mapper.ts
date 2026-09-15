@@ -1,4 +1,4 @@
-import { UserStatus } from '@prisma/client';
+import { UserStatus } from '../../domain/types';
 import { ExternalUser } from './customer-api.types';
 
 /** Internal representation of a synchronized user, independent of any customer's API shape. */
