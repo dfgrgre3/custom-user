@@ -79,6 +79,10 @@ describe('Users & Sync (e2e)', () => {
   });
 
   afterAll(async () => {
+    // If beforeAll failed before `app`/`supabase` were assigned (e.g. missing
+    // Supabase env vars), there's nothing to clean up or close.
+    if (!app || !supabase) return;
+
     const client = supabase.getClient();
     await client.from('users').delete().not('id', 'is', null);
     await client.from('sync_runs').delete().not('id', 'is', null);
