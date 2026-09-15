@@ -12,7 +12,7 @@ export function NavTabs() {
   const pathname = usePathname();
 
   return (
-    <nav className="mb-6 flex gap-1 border-b border-border">
+    <nav aria-label="Primary navigation" className="mb-7 flex gap-1 border-b border-border">
       {TABS.map((tab) => {
         // The user-detail route (/users/[id]) is reached by clicking a row,
         // not a tab, but it's still part of the "Users" section.

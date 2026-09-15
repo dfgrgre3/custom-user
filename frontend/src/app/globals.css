@@ -48,9 +48,18 @@
 }
 
 body {
-  background: var(--background);
+  background: linear-gradient(180deg, #fafbff 0%, var(--background) 280px);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
 }
 
 h1, h2, h3 {

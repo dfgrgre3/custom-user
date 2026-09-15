@@ -81,7 +81,7 @@ export default function SyncHistoryPage() {
             ) : runs.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-3.5 py-8 text-center text-muted">
-                  No synchronization runs yet.
+                  No synchronization runs yet. Start a sync to create the first run.
                 </td>
               </tr>
             ) : (

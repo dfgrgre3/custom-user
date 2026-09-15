@@ -31,11 +31,6 @@ export default function UsersPage() {
     return () => clearTimeout(timer);
   }, [company, search]);
 
-  // Reset to page 1 whenever the effective filters change.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedCompany, debouncedSearch, status, includeDeleted]);
-
   const [result, setResult] = useState<PaginatedUsers | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -86,19 +81,28 @@ export default function UsersPage() {
           type="text"
           placeholder="Filter by company…"
           value={company}
-          onChange={(e) => setCompany(e.target.value)}
+          onChange={(e) => {
+            setCompany(e.target.value);
+            setPage(1);
+          }}
           className="rounded-md border border-border bg-white px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
         />
         <input
           type="text"
           placeholder="Search name, email, company…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           className="rounded-md border border-border bg-white px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
         />
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value as UserStatus | "")}
+          onChange={(e) => {
+            setStatus(e.target.value as UserStatus | "");
+            setPage(1);
+          }}
           className="rounded-md border border-border bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
         >
           <option value="">Any status</option>
@@ -110,7 +114,10 @@ export default function UsersPage() {
           <input
             type="checkbox"
             checked={includeDeleted}
-            onChange={(e) => setIncludeDeleted(e.target.checked)}
+            onChange={(e) => {
+              setIncludeDeleted(e.target.checked);
+              setPage(1);
+            }}
             className="rounded border-border text-accent focus:ring-accent-soft"
           />
           include deleted
@@ -147,7 +154,7 @@ export default function UsersPage() {
             ) : users.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-3.5 py-8 text-center text-muted">
-                  No users found.
+                  No users found. Try changing the filters or run a sync.
                 </td>
               </tr>
             ) : (
