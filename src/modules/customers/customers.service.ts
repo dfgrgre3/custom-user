@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../../infrastructure/database/supabase.service';
 import { Customer, CustomerRow, mapCustomerRow } from '../../domain/types';
@@ -11,54 +11,33 @@ import { Customer, CustomerRow, mapCustomerRow } from '../../domain/types';
  */
 @Injectable()
 export class CustomersService {
-  private readonly logger = new Logger(CustomersService.name);
-
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
   ) {}
 
-  /** Returns the configured default customer, creating its row on first use. */
+  /**
+   * Returns the configured default customer, creating its row on first use.
+   *
+   * Uses a single `upsert` on the `customers.name` unique constraint rather
+   * than "select, then insert if missing": the latter has a race window
+   * where two concurrent calls can both see "not found" and both insert,
+   * producing a duplicate `Customer` row for the same name.
+   */
   async getOrCreateDefaultCustomer(): Promise<Customer> {
     const name = this.config.get<string>('app.customer.name')!;
     const apiBaseUrl = this.config.get<string>('app.customer.apiBaseUrl')!;
     const client = this.supabase.getClient();
 
-    const { data: existing, error: findError } = await client
+    const { data: upserted, error } = await client
       .from('customers')
-      .select('*')
-      .eq('name', name)
-      .maybeSingle<CustomerRow>();
-    if (findError) {
-      throw new Error(`Failed to look up customer: ${findError.message}`);
-    }
-
-    if (existing) {
-      if (existing.api_base_url !== apiBaseUrl) {
-        const { data: updated, error: updateError } = await client
-          .from('customers')
-          .update({ api_base_url: apiBaseUrl })
-          .eq('id', existing.id)
-          .select('*')
-          .single<CustomerRow>();
-        if (updateError || !updated) {
-          throw new Error(`Failed to update customer: ${updateError?.message}`);
-        }
-        return mapCustomerRow(updated);
-      }
-      return mapCustomerRow(existing);
-    }
-
-    this.logger.log(`Creating customer record for "${name}"`);
-    const { data: created, error: createError } = await client
-      .from('customers')
-      .insert({ name, api_base_url: apiBaseUrl })
+      .upsert({ name, api_base_url: apiBaseUrl }, { onConflict: 'name' })
       .select('*')
       .single<CustomerRow>();
-    if (createError || !created) {
-      throw new Error(`Failed to create customer: ${createError?.message}`);
+    if (error || !upserted) {
+      throw new Error(`Failed to upsert customer: ${error?.message}`);
     }
-    return mapCustomerRow(created);
+    return mapCustomerRow(upserted);
   }
 
   async findById(id: string): Promise<Customer | null> {

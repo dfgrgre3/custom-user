@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
@@ -9,6 +9,23 @@ import {
   Max,
   Min,
 } from 'class-validator';
+
+/**
+ * `@Type(() => Boolean)` alone is unsafe for query strings: JS's `Boolean()`
+ * coerces any non-empty string — including the literal string "false" — to
+ * `true`. That would make `?includeDeleted=false` behave like `=true`. This
+ * only treats the strings "true"/"false" (any case) as booleans; anything
+ * else fails validation via @IsBoolean() instead of silently being true.
+ */
+function toBoolean({ value }: { value: unknown }): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return value;
+}
 
 export class ListUsersQueryDto {
   @ApiPropertyOptional({
@@ -37,7 +54,7 @@ export class ListUsersQueryDto {
     default: false,
   })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(toBoolean)
   @IsBoolean()
   includeDeleted?: boolean = false;
 

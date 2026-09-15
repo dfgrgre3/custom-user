@@ -1,4 +1,5 @@
 import {
+  HealthStatus,
   PaginatedSyncRuns,
   PaginatedUsers,
   SyncedUser,
@@ -59,4 +60,27 @@ export function listSyncRuns(page: number, limit: number): Promise<PaginatedSync
 
 export function triggerSync(): Promise<TriggerSyncResult> {
   return request<TriggerSyncResult>(`/sync/users`, { method: "POST" });
+}
+
+/**
+ * Deliberately doesn't use `request()`: `/health` returns a meaningful body
+ * on both 200 (all ok) and 503 (a component failed) — `request()` would
+ * throw away that body and surface the 503 as a generic ApiError. Any
+ * genuine transport failure (backend unreachable) is reported as an
+ * "error" status too, rather than propagating an exception the caller has
+ * to handle separately from a normal unhealthy response.
+ */
+export async function getHealth(): Promise<HealthStatus> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/health`, { cache: "no-store" });
+    return (await res.json()) as HealthStatus;
+  } catch {
+    return {
+      status: "error",
+      components: {
+        database: { status: "error", error: "Backend unreachable" },
+        customerApi: { status: "error", error: "Backend unreachable" },
+      },
+    };
+  }
 }

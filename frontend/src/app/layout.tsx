@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { NavTabs } from "@/components/nav-tabs";
+import { SystemStatus } from "@/components/system-status";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -35,12 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 Synchronized users, stored locally and served from our own database.
               </p>
             </div>
-            <div className="hidden rounded-lg border border-border bg-surface px-3 py-2 text-right sm:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">System</p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-ok">
-                <span className="h-1.5 w-1.5 rounded-full bg-ok" /> Ready
-              </p>
-            </div>
+            <SystemStatus />
           </header>
           <NavTabs />
           <main>{children}</main>

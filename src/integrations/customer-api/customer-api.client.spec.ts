@@ -3,6 +3,7 @@ import { AxiosError, AxiosHeaders } from 'axios';
 import { of, throwError } from 'rxjs';
 import { CustomerApiClient } from './customer-api.client';
 import {
+  CustomerApiContractError,
   CustomerApiUnauthorizedError,
   CustomerApiUnavailableError,
 } from './customer-api.errors';
@@ -135,5 +136,56 @@ describe('CustomerApiClient', () => {
 
     expect(users.map((u) => u.id)).toEqual(['1', '2']);
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a response with an invalid user status instead of passing it through', async () => {
+    const get = jest.fn().mockReturnValue(
+      of(
+        pageResponse({
+          data: [
+            {
+              id: '1',
+              name: 'A',
+              email: 'a@example.com',
+              // Not one of active/invited/suspended — the mapper's
+              // `as ExternalUserStatus` cast would have accepted this
+              // silently before runtime validation was added.
+              status: 'deleted' as never,
+              company: { name: 'Co', industry: 'Tech', role: 'Eng' },
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      ),
+    );
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(client.fetchAllUsers(options)).rejects.toBeInstanceOf(
+      CustomerApiContractError,
+    );
+  });
+
+  it('rejects a response missing required fields', async () => {
+    const get = jest
+      .fn()
+      .mockReturnValue(of({ data: { data: 'not-an-array' } }));
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(client.fetchAllUsers(options)).rejects.toBeInstanceOf(
+      CustomerApiContractError,
+    );
+  });
+
+  it('does not retry a contract violation (retrying an identical malformed response cannot succeed)', async () => {
+    const get = jest
+      .fn()
+      .mockReturnValue(of({ data: { data: 'not-an-array' } }));
+    const client = new CustomerApiClient({ get } as unknown as HttpService);
+
+    await expect(
+      client.fetchAllUsers({ ...options, maxRetries: 3 }),
+    ).rejects.toBeInstanceOf(CustomerApiContractError);
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });

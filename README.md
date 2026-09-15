@@ -55,6 +55,8 @@ All configuration is environment variables (`.env`, see `.env.example`):
 | `CUSTOMER_API_TIMEOUT_MS` / `CUSTOMER_API_MAX_RETRIES` / `CUSTOMER_API_PAGE_SIZE` | HTTP client tuning |
 | `SYNC_CRON` | Optional cron expression for automatic sync (e.g. `*/15 * * * *`). Empty = disabled. |
 
+Every variable above (except `SYNC_CRON`, which is optional) is validated at startup (`src/config/configuration.schema.ts`, via Zod): missing values, a non-URL `SUPABASE_URL`/`CUSTOMER_API_BASE_URL`, or an out-of-range number fail application startup immediately with every problem listed at once — the app never "starts successfully" and then fails on the first request that touches Supabase or the customer API.
+
 ## Endpoints
 
 ### `POST /sync/users`
@@ -108,6 +110,24 @@ Paginated operational history of every `POST /sync/users` call, most recent firs
 curl "<backend URL>/api/v1/sync/runs?page=1&limit=20"
 ```
 
+### `GET /health`
+
+Actually exercises both external dependencies — a cheap real query against Supabase and a 1-record request to the customer API — rather than just confirming the process is running. Returns `200` with `status: "ok"` when both succeed, `503` with `status: "error"` and per-component detail otherwise. Unversioned and unprefixed (like `POST /sync/users`), so it's reachable at a fixed path for uptime monitors. This backs the frontend's "System" status indicator.
+
+```bash
+curl "<backend URL>/health"
+```
+
+```json
+{
+  "status": "error",
+  "components": {
+    "database": { "status": "ok" },
+    "customerApi": { "status": "error", "error": "getaddrinfo ENOTFOUND …" }
+  }
+}
+```
+
 Full interactive documentation (request/response schemas) is at `/api/docs`.
 
 ## UI
@@ -120,9 +140,7 @@ A separate Next.js app in [`frontend/`](frontend/) (App Router, TypeScript, Tail
 | `/users/[id]` | User detail — account, company, and synchronization info for one user |
 | `/sync-history` | Every synchronization run, most recent first, with status/duration/record counts |
 
-It talks to our own API (`GET /api/v1/users`, `GET /api/v1/users/:id`, `GET /api/v1/sync/runs`, `POST /sync/users`) for all synchronized-user data — never the customer API directly. The backend URL is configured via `NEXT_PUBLIC_API_BASE_URL` (see `frontend/.env.local.example`).
-
-The frontend also has a direct browser-side Supabase client (`frontend/src/lib/supabase.ts`), initialized with `NEXT_PUBLIC_SUPABASE_URL` and the publishable/anon key — for features that talk to Supabase directly (e.g. Supabase Auth) rather than through the backend. It is safe to expose these values to the browser: access is governed by Row Level Security policies on the Supabase project, not by keeping the key secret.
+It talks to our own API (`GET /api/v1/users`, `GET /api/v1/users/:id`, `GET /api/v1/sync/runs`, `POST /sync/users`, `GET /health`) for all data — never the customer API directly, and holds no Supabase credentials of its own. The backend URL is configured via `NEXT_PUBLIC_API_BASE_URL` (see `frontend/.env.local.example`). The header's "System" indicator polls `GET /health` every 30s and reflects the backend's real dependency status (Ready / Degraded / Checking…), not a hardcoded label.
 
 ## Database
 
@@ -134,12 +152,12 @@ npm run supabase:schema   # applies supabase/schema.sql (requires SUPABASE_DB_UR
 
 Re-run it whenever `supabase/schema.sql` changes. You can also paste the file into the Supabase SQL Editor directly.
 
-Tables: `customers`, `users` (synchronized users, scoped per customer), `sync_runs` (operational history of each sync attempt).
+Tables: `customers` (unique `name`, upserted on it to avoid a duplicate-row race), `users` (synchronized users, scoped per customer), `sync_runs` (operational history of each sync attempt).
 
 ## Testing
 
 ```bash
-npm test        # unit tests (mapper, HTTP client retry/error handling, sync orchestration, users service)
+npm test        # unit tests (mapper, HTTP client retry/contract validation, sync orchestration, users query DTO, users service)
 npm run test:e2e   # integration tests against your real Supabase database, customer API client mocked
 ```
 
@@ -156,6 +174,7 @@ src/                             Backend (NestJS)
 ├── integrations/customer-api/    Isolated external API client, types, mapper, errors
 ├── modules/
 │   ├── customers/                Customer identity (one row per customer)
+│   ├── health/                   GET /health — real Supabase + customer API checks
 │   ├── sync/                     Sync orchestration, controllers (POST /sync/users, GET .../sync/runs), scheduler
 │   └── users/                    Read API: repository, service, controller, DTOs
 ├── app.module.ts
@@ -168,10 +187,10 @@ frontend/                        UI (Next.js, separate app — see frontend/READ
 │   ├── page.tsx                  Users list ("/")
 │   ├── users/[id]/page.tsx       User detail
 │   └── sync-history/page.tsx     Sync history
-├── src/components/                Shared UI: nav tabs, status badges, sync button, pager
+├── src/components/                Shared UI: nav tabs, status badges, sync button, pager, system status
 └── src/lib/
     ├── api.ts                     Backend API client and shared types
-    └── supabase.ts                Direct browser-side Supabase client (anon key)
+    └── types.ts                   Shared TypeScript types mirroring the backend's response DTOs
 ```
 
 ## Design decisions & assumptions

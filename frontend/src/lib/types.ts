@@ -71,3 +71,13 @@ export interface UsersListFilters {
   page?: number;
   limit?: number;
 }
+
+export type ComponentStatus = "ok" | "error";
+
+export interface HealthStatus {
+  status: ComponentStatus;
+  components: {
+    database: { status: ComponentStatus; error?: string };
+    customerApi: { status: ComponentStatus; error?: string };
+  };
+}

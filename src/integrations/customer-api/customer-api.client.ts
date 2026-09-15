@@ -3,10 +3,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { isAxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import {
+  CustomerApiContractError,
   CustomerApiError,
   CustomerApiUnauthorizedError,
   CustomerApiUnavailableError,
 } from './customer-api.errors';
+import { externalUserListResponseSchema } from './customer-api.schema';
 import { ExternalUser, ExternalUserListResponse } from './customer-api.types';
 
 export interface CustomerApiClientOptions {
@@ -55,18 +57,28 @@ export class CustomerApiClient {
     const url = `${options.baseUrl.replace(/\/+$/, '')}/api/users`;
 
     return this.withRetry(options.maxRetries, async () => {
+      let body: unknown;
       try {
         const response = await firstValueFrom(
-          this.http.get<ExternalUserListResponse>(url, {
+          this.http.get<unknown>(url, {
             headers: { Authorization: `Bearer ${options.token}` },
             params: { page, limit: options.pageSize },
             timeout: options.timeoutMs,
           }),
         );
-        return response.data;
+        body = response.data;
       } catch (error) {
         throw this.toCustomerApiError(error);
       }
+
+      // Validated separately from the HTTP call above: a schema mismatch on
+      // a 2xx response is a contract violation, not a transport failure,
+      // and must not be retried or classified as CustomerApiUnavailableError.
+      const parsed = externalUserListResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new CustomerApiContractError(parsed.error.message, parsed.error);
+      }
+      return parsed.data;
     });
   }
 
@@ -83,9 +95,12 @@ export class CustomerApiClient {
       } catch (error) {
         lastError = error;
 
-        // Never retry auth failures or client (4xx) errors: the request
-        // itself is wrong/unauthorized and retrying will not help.
+        // Never retry auth failures, client (4xx) errors, or contract
+        // violations: none of these change on a retry — the token is
+        // still bad, the request is still malformed, or the API will
+        // still send back the same unexpected shape.
         if (error instanceof CustomerApiUnauthorizedError) throw error;
+        if (error instanceof CustomerApiContractError) throw error;
         if (
           error instanceof CustomerApiError &&
           this.isNonRetryable(error.statusCode)

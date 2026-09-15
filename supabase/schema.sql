@@ -25,7 +25,9 @@ create table if not exists customers (
   name text not null,
   api_base_url text not null,
   created_at timestamptz(3) not null default now(),
-  updated_at timestamptz(3) not null default now()
+  updated_at timestamptz(3) not null default now(),
+
+  constraint customers_name_key unique (name)
 );
 
 create table if not exists users (

@@ -7,10 +7,7 @@ Next.js (App Router, TypeScript, Tailwind CSS v4) UI for the [backend](../README
 ```bash
 npm install
 cp .env.local.example .env.local
-# Edit .env.local:
-#   NEXT_PUBLIC_API_BASE_URL              the backend's base URL, if not the default dev port
-#   NEXT_PUBLIC_SUPABASE_URL              your Supabase project URL
-#   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY  Supabase publishable/anon key (safe for the browser)
+# Edit .env.local: set NEXT_PUBLIC_API_BASE_URL if the backend isn't on its default dev port
 npm run dev                        # starts the dev server (see the printed URL)
 ```
 
@@ -29,16 +26,15 @@ The backend must be running separately (`npm run start:dev` in the parent direct
 ```text
 src/
 ├── app/                  Pages (see table above) + layout.tsx (shared header/nav) + globals.css (design tokens)
-├── components/           Shared UI: NavTabs, UserStatusBadge/SyncStatusBadge, SyncButton, Pager
+├── components/           Shared UI: NavTabs, UserStatusBadge/SyncStatusBadge, SyncButton, Pager, SystemStatus
 └── lib/
     ├── api.ts             The only file that knows the backend's routes/shapes
-    ├── types.ts           Shared TypeScript types mirroring the backend's response DTOs
-    └── supabase.ts        Direct browser-side Supabase client (publishable/anon key only)
+    └── types.ts           Shared TypeScript types mirroring the backend's response DTOs
 ```
 
 ## Data flow
 
-All synchronized-user data (users, sync runs, triggering a sync) goes through the NestJS backend over HTTP — never directly to Supabase. `src/lib/supabase.ts` exists separately for features that talk to Supabase directly from the browser (e.g. Supabase Auth); it's safe to expose `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` publicly since access is governed by Row Level Security on the Supabase project, not by keeping the key secret. The backend alone holds the service role key, which bypasses RLS and must never reach the browser.
+Everything — synchronized-user data, sync runs, triggering a sync, and system health — goes through the NestJS backend over HTTP. This app holds no database credentials of its own and never talks to Supabase directly; `NEXT_PUBLIC_API_BASE_URL` is its only required configuration. The header's `SystemStatus` component polls the backend's `GET /health` every 30s, which itself makes real checks against Supabase and the customer API — the indicator reflects genuine dependency health, not a hardcoded label.
 
 ## Design
 

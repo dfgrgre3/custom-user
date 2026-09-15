@@ -190,13 +190,17 @@ export class SyncService {
 
   private classifyError(error: unknown): { code: string; message: string } {
     if (error instanceof CustomerApiError) {
-      return {
-        code:
-          error.name === 'CustomerApiUnauthorizedError'
-            ? 'EXTERNAL_API_UNAUTHORIZED'
-            : 'EXTERNAL_API',
-        message: error.message,
-      };
+      let code = 'EXTERNAL_API';
+      if (error.name === 'CustomerApiUnauthorizedError') {
+        code = 'EXTERNAL_API_UNAUTHORIZED';
+      } else if (error.name === 'CustomerApiContractError') {
+        // Distinct from a transport/HTTP failure: the API answered, but its
+        // shape didn't match what we validate against (see
+        // customer-api.schema.ts). Surfacing this separately makes it clear
+        // in SyncRun history that this isn't "API was down."
+        code = 'EXTERNAL_API_CONTRACT_VIOLATION';
+      }
+      return { code, message: error.message };
     }
     if (error instanceof Error) {
       return { code: 'UNEXPECTED', message: error.message };

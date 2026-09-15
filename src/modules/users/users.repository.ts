@@ -8,6 +8,22 @@ export interface FindUsersResult {
   total: number;
 }
 
+/**
+ * Escapes a value for safe interpolation into a PostgREST filter string
+ * (used by `.or()` below). PostgREST's own filter syntax is comma-separated
+ * (`col.op.value,col.op.value`) and uses `.`, `(`, `)`, `*` as structural
+ * characters — an unescaped user-supplied value containing any of these
+ * changes which columns/operators are being filtered on, not just what
+ * value they're compared against. PostgREST recognizes a backslash escape
+ * for exactly this: prefixing `,`, `.`, `(`, `)`, and `\` itself with `\`.
+ * `%`/`_` (ILIKE wildcards) are left alone — they're not structural to the
+ * filter grammar, only to the pattern match itself, which is the intended
+ * "contains" search behavior here.
+ */
+function escapePostgrestFilterValue(value: string): string {
+  return value.replace(/[,.()\\]/g, (char) => `\\${char}`);
+}
+
 @Injectable()
 export class UsersRepository {
   constructor(private readonly supabase: SupabaseService) {}
@@ -31,7 +47,7 @@ export class UsersRepository {
     }
     const search = query.search?.trim();
     if (search) {
-      const pattern = `%${search}%`;
+      const pattern = `%${escapePostgrestFilterValue(search)}%`;
       builder = builder.or(
         [
           `name.ilike.${pattern}`,
