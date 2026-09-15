@@ -1,0 +1,8 @@
+# Customer User Sync
+
+Customer User Sync is an operations dashboard for browsing synchronized customer users and reviewing synchronization history.
+
+## Pages
+
+- [Users](/): Browse and filter synchronized users.
+- [Sync history](/sync-history): Review synchronization runs and their results.

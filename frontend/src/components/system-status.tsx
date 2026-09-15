@@ -49,7 +49,7 @@ export function SystemStatus() {
 
   return (
     <div
-      className="hidden rounded-lg border border-border bg-surface px-3 py-2 text-right sm:block"
+      className="hidden min-h-[54px] w-[112px] rounded-lg border border-border bg-surface px-3 py-2 text-right sm:block"
       title={title}
     >
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">System</p>

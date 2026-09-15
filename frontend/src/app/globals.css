@@ -21,8 +21,8 @@
   --run: #1d4ed8;
   --run-soft: #eef4ff;
 
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-jetbrains-mono);
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 @theme inline {
@@ -50,7 +50,7 @@
 body {
   background: linear-gradient(180deg, #fafbff 0%, var(--background) 280px);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-sans);
 }
 
 button, input, select {

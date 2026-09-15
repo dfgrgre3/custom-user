@@ -73,6 +73,7 @@ export default function UsersPage() {
 
   const users = result?.data ?? [];
   const pagination = result?.pagination;
+  const fillerRowCount = isLoading ? 0 : Math.max(0, PAGE_SIZE - Math.max(users.length, 1));
 
   return (
     <div>
@@ -97,19 +98,23 @@ export default function UsersPage() {
           }}
           className="rounded-md border border-border bg-white px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
         />
-        <select
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value as UserStatus | "");
-            setPage(1);
-          }}
-          className="rounded-md border border-border bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
-        >
-          <option value="">Any status</option>
-          <option value="active">active</option>
-          <option value="invited">invited</option>
-          <option value="suspended">suspended</option>
-        </select>
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <span className="sr-only">Filter by user status</span>
+          <select
+            aria-label="Filter by user status"
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value as UserStatus | "");
+              setPage(1);
+            }}
+            className="rounded-md border border-border bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
+          >
+            <option value="">Any status</option>
+            <option value="active">active</option>
+            <option value="invited">invited</option>
+            <option value="suspended">suspended</option>
+          </select>
+        </label>
         <label className="flex items-center gap-1.5 text-sm text-muted">
           <input
             type="checkbox"
@@ -132,7 +137,9 @@ export default function UsersPage() {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div
+        className={`${isLoading ? "min-h-[850px]" : ""} overflow-x-auto rounded-lg border border-border`}
+      >
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-surface text-left text-xs font-medium uppercase tracking-wide text-muted">
@@ -146,14 +153,16 @@ export default function UsersPage() {
           </thead>
           <tbody>
             {isLoading ? (
-              <tr>
-                <td colSpan={6} className="px-3.5 py-8 text-center text-muted">
-                  Loading…
-                </td>
-              </tr>
+              Array.from({ length: PAGE_SIZE }, (_, index) => (
+                <tr key={`loading-${index}`} className="h-10 border-b border-border last:border-0">
+                  <td colSpan={6} className="px-3.5 py-2.5">
+                    {index === 0 && <span className="text-muted">Loading…</span>}
+                  </td>
+                </tr>
+              ))
             ) : users.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3.5 py-8 text-center text-muted">
+              <tr className="h-10 border-b border-border">
+                <td colSpan={6} className="px-3.5 py-2.5 text-center text-muted">
                   No users found. Try changing the filters or run a sync.
                 </td>
               </tr>
@@ -183,19 +192,26 @@ export default function UsersPage() {
                 </tr>
               ))
             )}
+            {Array.from({ length: fillerRowCount }, (_, index) => (
+              <tr key={`filler-${index}`} aria-hidden="true" className="h-10 border-b border-border last:border-0">
+                <td colSpan={6} className="px-3.5 py-2.5" />
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {pagination && (
-        <Pager
-          page={pagination.page}
-          totalPages={pagination.totalPages}
-          total={pagination.total}
-          onPrev={() => setPage((p) => Math.max(1, p - 1))}
-          onNext={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-        />
-      )}
+      <div className="min-h-10">
+        {pagination && (
+          <Pager
+            page={pagination.page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+          />
+        )}
+      </div>
     </div>
   );
 }

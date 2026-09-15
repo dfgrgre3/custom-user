@@ -9,6 +9,14 @@ const nextConfig: NextConfig = {
   },
   // Skip generating AGENTS.md/CLAUDE.md scaffold files in this folder.
   agentRules: false,
+  async headers() {
+    return [
+      {
+        source: "/((?!_next/).*)",
+        headers: [{ key: "X-Robots-Tag", value: "index, follow" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
