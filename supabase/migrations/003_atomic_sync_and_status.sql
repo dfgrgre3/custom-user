@@ -44,6 +44,10 @@ begin
     raise exception 'sync_run % not found', p_sync_run_id;
   end if;
 
+  delete from sync_run_locks
+  where customer_id = p_customer_id
+    and sync_run_id = p_sync_run_id;
+
   return v_run;
 end;
 $$;
@@ -72,6 +76,12 @@ begin
   if v_run.id is null then
     raise exception 'sync_run % not found', p_sync_run_id;
   end if;
+
+  delete from sync_run_locks
+  where customer_id = (
+    select customer_id from sync_runs where id = p_sync_run_id
+  )
+    and sync_run_id = p_sync_run_id;
 
   return v_run;
 end;

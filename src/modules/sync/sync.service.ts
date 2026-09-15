@@ -16,7 +16,7 @@ const SYNC_ALREADY_RUNNING_CODE = 'P0001';
  *
  *   1. Start the run via the `start_sync_run` Postgres function, which
  *      atomically enforces "at most one RUNNING sync per customer" through
- *      a partial unique index (see supabase/migrations/002) — a
+ *      the sync_run_locks table (see supabase/migrations/002) — a
  *      database-level lock, not an in-process one, so it holds even across
  *      multiple backend instances. A leased expiry means a crashed
  *      process's stuck RUNNING row doesn't lock the customer out forever.
